@@ -1,0 +1,96 @@
+include_guard(GLOBAL)
+
+include(FetchContent)
+
+set(PYRXMESH_VERSION "@PROJECT_VERSION@")
+set(PYRXMESH_PLUGIN_ABI_VERSION "@PYRXMESH_PLUGIN_ABI_VERSION@")
+set(PYRXMESH_BUILD_CONFIG_TAG "@PYRXMESH_BUILD_CONFIG_TAG@")
+set(PYRXMESH_RXMESH_GIT_REPOSITORY "@PYRXMESH_RXMESH_GIT_REPOSITORY@")
+set(PYRXMESH_RXMESH_GIT_TAG "@PYRXMESH_RXMESH_GIT_TAG@")
+set(PYRXMESH_RXMESH_SOURCE_DIR "@PYRXMESH_RXMESH_SOURCE_DIR@")
+set(PYRXMESH_USE_POLYSCOPE "@PYRXMESH_USE_POLYSCOPE@")
+set(PYRXMESH_BUILD_RXMESH_TESTS "@PYRXMESH_BUILD_RXMESH_TESTS@")
+set(PYRXMESH_BUILD_RXMESH_APPS "@PYRXMESH_BUILD_RXMESH_APPS@")
+set(PYRXMESH_USE_DOUBLE "@PYRXMESH_USE_DOUBLE@")
+set(PYRXMESH_USE_CUDSS "@PYRXMESH_USE_CUDSS@")
+set(PYRXMESH_USE_SUITESPARSE "@PYRXMESH_USE_SUITESPARSE@")
+set(PYRXMESH_CUDA_ARCHITECTURES "@CMAKE_CUDA_ARCHITECTURES@")
+
+get_filename_component(_PYRXMESH_PACKAGE_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+
+if(NOT TARGET pyrxmesh::plugin_api)
+    add_library(pyrxmesh::plugin_api INTERFACE IMPORTED)
+    set_target_properties(pyrxmesh::plugin_api PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${_PYRXMESH_PACKAGE_DIR}/include"
+        INTERFACE_COMPILE_DEFINITIONS
+            "PYRXMESH_PLUGIN_ABI_VERSION=${PYRXMESH_PLUGIN_ABI_VERSION};PYRXMESH_BUILD_CONFIG=\"${PYRXMESH_BUILD_CONFIG_TAG}\""
+    )
+endif()
+
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT "${PYRXMESH_CUDA_ARCHITECTURES}" STREQUAL "")
+    set(CMAKE_CUDA_ARCHITECTURES "${PYRXMESH_CUDA_ARCHITECTURES}")
+endif()
+
+if(NOT TARGET RXMesh)
+    set(RX_BUILD_TESTS "${PYRXMESH_BUILD_RXMESH_TESTS}" CACHE BOOL "" FORCE)
+    set(RX_BUILD_APPS "${PYRXMESH_BUILD_RXMESH_APPS}" CACHE BOOL "" FORCE)
+    set(RX_USE_POLYSCOPE "${PYRXMESH_USE_POLYSCOPE}" CACHE BOOL "" FORCE)
+    set(RX_USE_DOUBLE "${PYRXMESH_USE_DOUBLE}" CACHE BOOL "" FORCE)
+    set(RX_USE_CUDSS "${PYRXMESH_USE_CUDSS}" CACHE BOOL "" FORCE)
+    set(RX_USE_SUITESPARSE "${PYRXMESH_USE_SUITESPARSE}" CACHE BOOL "" FORCE)
+
+    if(PYRXMESH_RXMESH_SOURCE_DIR)
+        get_filename_component(_PYRXMESH_RXMESH_SOURCE_DIR_ABS
+            "${PYRXMESH_RXMESH_SOURCE_DIR}"
+            ABSOLUTE
+        )
+        if(NOT EXISTS "${_PYRXMESH_RXMESH_SOURCE_DIR_ABS}/CMakeLists.txt")
+            message(FATAL_ERROR
+                "PyRXMesh was built against a local RXMesh source tree, but it "
+                "was not found: ${_PYRXMESH_RXMESH_SOURCE_DIR_ABS}"
+            )
+        endif()
+        add_subdirectory(
+            "${_PYRXMESH_RXMESH_SOURCE_DIR_ABS}"
+            "${CMAKE_BINARY_DIR}/_deps/rxmesh-build"
+        )
+    else()
+        FetchContent_Declare(rxmesh
+            GIT_REPOSITORY "${PYRXMESH_RXMESH_GIT_REPOSITORY}"
+            GIT_TAG "${PYRXMESH_RXMESH_GIT_TAG}"
+            GIT_SHALLOW TRUE
+        )
+        FetchContent_MakeAvailable(rxmesh)
+    endif()
+
+    if(TARGET RXMesh)
+        set_target_properties(RXMesh PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    endif()
+endif()
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
+
+if(NOT TARGET pybind11::module)
+    find_package(pybind11 CONFIG REQUIRED)
+endif()
+
+function(pyrxmesh_add_plugin target)
+    pybind11_add_module(${target} MODULE ${ARGN})
+    target_link_libraries(${target} PRIVATE RXMesh pyrxmesh::plugin_api)
+    target_compile_features(${target} PRIVATE cxx_std_17)
+    target_compile_definitions(${target}
+        PRIVATE PYRXMESH_PLUGIN_ABI_VERSION=${PYRXMESH_PLUGIN_ABI_VERSION}
+        PRIVATE PYRXMESH_BUILD_CONFIG="${PYRXMESH_BUILD_CONFIG_TAG}"
+    )
+    set_target_properties(${target} PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+        CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    )
+    if(WIN32)
+        target_compile_definitions(${target}
+            PRIVATE _USE_MATH_DEFINES
+            PRIVATE NOMINMAX
+            PRIVATE _CRT_SECURE_NO_WARNINGS
+        )
+    endif()
+endfunction()

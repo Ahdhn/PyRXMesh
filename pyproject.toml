@@ -1,0 +1,53 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.12",
+    "pybind11>=2.13",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "PyRXMesh"
+version = "0.2.1"
+description = "Python bindings for RXMesh GPU triangle mesh processing"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+]
+license = { text = "BSD-2-Clause" }
+authors = [
+    { name = "Ahmed Mahmoud" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",    
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3"
+]
+
+[project.urls]
+RXMesh = "https://github.com/owensgroup/RXMesh"
+Documentation = "https://ahdhn.github.io/RXMeshDocs/"
+
+[project.scripts]
+pyrxmesh-plugin = "pyrxmesh.plugin:main"
+
+[tool.scikit-build]
+minimum-version = "0.12"
+cmake.version = ">=3.24,<4"
+cmake.build-type = "Release"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["pyrxmesh"]
+build.targets = ["_rxmesh"]
+install.components = ["python"]
+
+[tool.scikit-build.cmake.define]
+PYRXMESH_RXMESH_GIT_REPOSITORY = "https://github.com/owensgroup/RXMesh.git"
+PYRXMESH_RXMESH_GIT_TAG = "main"
+PYRXMESH_RXMESH_SOURCE_DIR = ""
+PYRXMESH_USE_POLYSCOPE = "ON"
+PYRXMESH_BUILD_RXMESH_TESTS = "OFF"
+PYRXMESH_BUILD_RXMESH_APPS = "OFF"
+PYRXMESH_USE_DOUBLE = "OFF"
+PYRXMESH_USE_CUDSS = "OFF"
+PYRXMESH_USE_SUITESPARSE = "OFF"

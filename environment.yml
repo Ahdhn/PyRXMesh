@@ -1,0 +1,13 @@
+name: PyRXMesh
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - cmake>=3.24,<4
+  - ninja
+  - git
+  - numpy>=1.26
+  - pip:
+      - scikit-build-core>=0.12
+      - pybind11>=2.13
