@@ -1,15 +1,10 @@
 # Custom CUDA Plugins
 
-Most PyRXMesh workflows should stay in Python: load meshes, create attributes,
-move data, and orchestrate processing from Python code. Custom CUDA plugins are
-for the parts of RXMesh that require C++/CUDA device lambdas.
+Most PyRXMesh workflows should stay in Python. Custom CUDA plugins are for the parts of RXMesh that require C++/CUDA device lambdas.
 
-The intended workflow is to keep orchestration and data management in Python,
-and put only the hot RXMesh lambda code in a small compiled plugin package.
+The intended workflow is to keep orchestration and data management in Python, and put only the hot RXMesh lambda code in a small compiled plugin package.
 
-## Scaffold a Plugin
-
-Create a plugin package:
+## Creating a Plugin Package
 
 ```bash
 python -m pyrxmesh.plugin init my_kernels
@@ -17,15 +12,8 @@ cd my_kernels
 python -m pip install -v --no-build-isolation .
 ```
 
-The generated plugin builds against the `pyrxmesh` package installed in the
-active Python environment. It uses the same RXMesh repository/tag/options and
-checks the build configuration at runtime.
+The generated plugin builds against the `pyrxmesh` package installed in the active Python environment. It reuses the RXMesh headers and library installed with PyRXMesh, so plugin builds should compile only the plugin code instead of rebuilding RXMesh. The plugin also checks the PyRXMesh/RXMesh build configuration at runtime.
 
-Use the console script form if preferred:
-
-```bash
-pyrxmesh-plugin init my_kernels
-```
 
 ## Use a Plugin From Python
 
@@ -59,15 +47,11 @@ pyrxmesh::for_each<Op::EV, 256>(
     });
 ```
 
-Use `pyrxmesh::for_each` for RXMesh query operations from plugin modules. It
-delegates launch-box preparation to the installed PyRXMesh runtime and then
-launches the plugin's CUDA lambda without an extra Python data copy.
+Use `pyrxmesh::for_each` for RXMesh query operations from plugin modules. It delegates launch-box preparation to the installed PyRXMesh runtime and then launches the plugin's CUDA lambda without an extra Python data copy.
 
-## Checked-In Example
+## Examples
 
-The repository includes a complete custom-kernel plugin example in
-[`examples/custom_kernel_plugin`](examples/custom_kernel_plugin). It computes
-one scalar edge-length attribute on the GPU using an RXMesh `Op::EV` device
+The repository includes a complete custom-kernel plugin example in [`examples/custom_kernel_plugin`](examples/custom_kernel_plugin). It computes one scalar edge-length attribute on the GPU using an RXMesh `Op::EV` device
 lambda, then reads the result back from Python.
 
 Build the example plugin from the PyRXMesh repository root:
@@ -76,12 +60,12 @@ Build the example plugin from the PyRXMesh repository root:
 python -m pip install -v --no-build-isolation examples/custom_kernel_plugin
 ```
 
+After PyRXMesh is installed, this build links against the installed PyRXMesh package and should not fetch or compile RXMesh again.
+
 Run it as:
 
 ```bash
 python examples/custom_kernel_plugin/run_edge_lengths.py --input mesh.obj
 ```
 
-The example package shows the intended split: Python loads the mesh and owns the
-workflow, while `src/rxmesh_edge_lengths.cu` contains only the performance
-critical RXMesh lambda.
+The example package shows the intended split where Python loads the mesh and owns the workflow while `src/rxmesh_edge_lengths.cu` contains only the performance critical RXMesh lambda.

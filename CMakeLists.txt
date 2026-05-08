@@ -67,6 +67,35 @@ endif()
 
 set_target_properties(RXMesh PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+include(FetchContent)
+
+function(pyrxmesh_fetchcontent_source_dir name out_var)
+    FetchContent_GetProperties(${name})
+    if(${name}_SOURCE_DIR)
+        set(${out_var} "${${name}_SOURCE_DIR}" PARENT_SCOPE)
+    else()
+        set(${out_var} "" PARENT_SCOPE)
+    endif()
+endfunction()
+
+if(PYRXMESH_RXMESH_SOURCE_DIR)
+    set(PYRXMESH_RXMESH_EFFECTIVE_SOURCE_DIR "${PYRXMESH_RXMESH_SOURCE_DIR_ABS}")
+else()
+    pyrxmesh_fetchcontent_source_dir(rxmesh PYRXMESH_RXMESH_EFFECTIVE_SOURCE_DIR)
+endif()
+pyrxmesh_fetchcontent_source_dir(rapidjson PYRXMESH_RAPIDJSON_SOURCE_DIR)
+pyrxmesh_fetchcontent_source_dir(spdlog PYRXMESH_SPDLOG_SOURCE_DIR)
+pyrxmesh_fetchcontent_source_dir(cereal PYRXMESH_CEREAL_SOURCE_DIR)
+pyrxmesh_fetchcontent_source_dir(glm PYRXMESH_GLM_SOURCE_DIR)
+pyrxmesh_fetchcontent_source_dir(cubql PYRXMESH_CUBQL_SOURCE_DIR)
+pyrxmesh_fetchcontent_source_dir(metis PYRXMESH_METIS_SOURCE_DIR)
+pyrxmesh_fetchcontent_source_dir(eigen PYRXMESH_EIGEN_SOURCE_DIR)
+if(PYRXMESH_USE_POLYSCOPE)
+    pyrxmesh_fetchcontent_source_dir(polyscope PYRXMESH_POLYSCOPE_SOURCE_DIR)
+else()
+    set(PYRXMESH_POLYSCOPE_SOURCE_DIR "")
+endif()
+
 pybind11_add_module(_rxmesh MODULE src/bindings.cu)
 target_link_libraries(_rxmesh PRIVATE RXMesh)
 target_include_directories(_rxmesh PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -92,6 +121,47 @@ install(TARGETS _rxmesh
     LIBRARY DESTINATION pyrxmesh COMPONENT python
     RUNTIME DESTINATION pyrxmesh COMPONENT python
 )
+install(TARGETS RXMesh
+    ARCHIVE DESTINATION pyrxmesh/lib COMPONENT python
+    LIBRARY DESTINATION pyrxmesh/lib COMPONENT python
+    RUNTIME DESTINATION pyrxmesh/bin COMPONENT python
+)
+
+if(TARGET metis)
+    install(TARGETS metis
+        ARCHIVE DESTINATION pyrxmesh/lib COMPONENT python
+        LIBRARY DESTINATION pyrxmesh/lib COMPONENT python
+        RUNTIME DESTINATION pyrxmesh/bin COMPONENT python
+    )
+endif()
+
+if(TARGET GKlib)
+    install(TARGETS GKlib
+        ARCHIVE DESTINATION pyrxmesh/lib COMPONENT python
+        LIBRARY DESTINATION pyrxmesh/lib COMPONENT python
+        RUNTIME DESTINATION pyrxmesh/bin COMPONENT python
+    )
+endif()
+
+if(TARGET polyscope)
+    install(TARGETS polyscope
+        ARCHIVE DESTINATION pyrxmesh/lib COMPONENT python
+        LIBRARY DESTINATION pyrxmesh/lib COMPONENT python
+        RUNTIME DESTINATION pyrxmesh/bin COMPONENT python
+    )
+endif()
+
+if(PYRXMESH_USE_POLYSCOPE)
+    foreach(PYRXMESH_POLYSCOPE_DEP_TARGET imgui glad glfw stb)
+        if(TARGET ${PYRXMESH_POLYSCOPE_DEP_TARGET})
+            install(TARGETS ${PYRXMESH_POLYSCOPE_DEP_TARGET}
+                ARCHIVE DESTINATION pyrxmesh/lib COMPONENT python
+                LIBRARY DESTINATION pyrxmesh/lib COMPONENT python
+                RUNTIME DESTINATION pyrxmesh/bin COMPONENT python
+            )
+        endif()
+    endforeach()
+endif()
 
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/pyrxmeshConfig.cmake.in"
@@ -109,6 +179,133 @@ install(FILES
     DESTINATION pyrxmesh/include/pyrxmesh
     COMPONENT python
 )
+if(PYRXMESH_RXMESH_EFFECTIVE_SOURCE_DIR)
+    install(DIRECTORY "${PYRXMESH_RXMESH_EFFECTIVE_SOURCE_DIR}/include/rxmesh"
+        DESTINATION pyrxmesh/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_RAPIDJSON_SOURCE_DIR AND EXISTS "${PYRXMESH_RAPIDJSON_SOURCE_DIR}/include")
+    install(DIRECTORY "${PYRXMESH_RAPIDJSON_SOURCE_DIR}/include/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_SPDLOG_SOURCE_DIR AND EXISTS "${PYRXMESH_SPDLOG_SOURCE_DIR}/include")
+    install(DIRECTORY "${PYRXMESH_SPDLOG_SOURCE_DIR}/include/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_CEREAL_SOURCE_DIR AND EXISTS "${PYRXMESH_CEREAL_SOURCE_DIR}/include")
+    install(DIRECTORY "${PYRXMESH_CEREAL_SOURCE_DIR}/include/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_GLM_SOURCE_DIR AND EXISTS "${PYRXMESH_GLM_SOURCE_DIR}/glm")
+    install(DIRECTORY "${PYRXMESH_GLM_SOURCE_DIR}/glm"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_CUBQL_SOURCE_DIR AND EXISTS "${PYRXMESH_CUBQL_SOURCE_DIR}/include")
+    install(DIRECTORY "${PYRXMESH_CUBQL_SOURCE_DIR}/include/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_CUBQL_SOURCE_DIR AND EXISTS "${PYRXMESH_CUBQL_SOURCE_DIR}/cuBQL")
+    install(DIRECTORY "${PYRXMESH_CUBQL_SOURCE_DIR}/cuBQL"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_METIS_SOURCE_DIR AND EXISTS "${PYRXMESH_METIS_SOURCE_DIR}/include")
+    install(DIRECTORY "${PYRXMESH_METIS_SOURCE_DIR}/include/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_EIGEN_SOURCE_DIR AND EXISTS "${PYRXMESH_EIGEN_SOURCE_DIR}/Eigen")
+    install(DIRECTORY "${PYRXMESH_EIGEN_SOURCE_DIR}/Eigen"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_EIGEN_SOURCE_DIR AND EXISTS "${PYRXMESH_EIGEN_SOURCE_DIR}/unsupported")
+    install(DIRECTORY "${PYRXMESH_EIGEN_SOURCE_DIR}/unsupported"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_POLYSCOPE_SOURCE_DIR AND EXISTS "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/include")
+    install(DIRECTORY "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/include/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_POLYSCOPE_SOURCE_DIR AND EXISTS "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/imgui/imgui")
+    install(DIRECTORY "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/imgui/imgui/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_POLYSCOPE_SOURCE_DIR AND EXISTS "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/imgui/implot")
+    install(DIRECTORY "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/imgui/implot/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_POLYSCOPE_SOURCE_DIR AND EXISTS "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/imgui/ImGuizmo")
+    install(DIRECTORY "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/imgui/ImGuizmo/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_POLYSCOPE_SOURCE_DIR AND EXISTS "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/imgui/custom_backends")
+    install(DIRECTORY "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/imgui/custom_backends/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_POLYSCOPE_SOURCE_DIR AND EXISTS "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/glad/include")
+    install(DIRECTORY "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/glad/include/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_POLYSCOPE_SOURCE_DIR AND EXISTS "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/glfw/include")
+    install(DIRECTORY "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/glfw/include/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_POLYSCOPE_SOURCE_DIR AND EXISTS "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/stb")
+    install(DIRECTORY "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/stb/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+        FILES_MATCHING PATTERN "*.h"
+    )
+endif()
+if(PYRXMESH_POLYSCOPE_SOURCE_DIR AND EXISTS "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/json/include")
+    install(DIRECTORY "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/json/include/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_POLYSCOPE_SOURCE_DIR AND EXISTS "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/MarchingCubeCpp/include")
+    install(DIRECTORY "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/MarchingCubeCpp/include/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
+if(PYRXMESH_POLYSCOPE_SOURCE_DIR AND EXISTS "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/IconFontCppHeaders/include")
+    install(DIRECTORY "${PYRXMESH_POLYSCOPE_SOURCE_DIR}/deps/IconFontCppHeaders/include/"
+        DESTINATION pyrxmesh/third_party/include
+        COMPONENT python
+    )
+endif()
 install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/pyrxmeshConfig.cmake"
     DESTINATION pyrxmesh/cmake

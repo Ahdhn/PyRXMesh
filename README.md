@@ -85,9 +85,7 @@ Supported dtypes are `float32`, `float64`, `int32`, and `int8`.
 
 ## Advanced: Custom CUDA Plugins
 
-Most PyRXMesh workflows should stay in Python. For RXMesh operations that require
-CUDA device lambdas, PyRXMesh also supports small compiled plugin packages that
-operate on PyRXMesh meshes and attributes without extra Python-side copies.
+Most PyRXMesh workflows should stay in Python. For RXMesh operations that require CUDA device lambdas, PyRXMesh also supports small compiled plugin packages that operate on PyRXMesh meshes and attributes without extra Python-side copies. Plugins build against the installed PyRXMesh package and reuse its RXMesh build, so plugin rebuilds are much smaller after PyRXMesh is installed.
 
 See [CUSTOM_CUDA_PLUGINS.md](CUSTOM_CUDA_PLUGINS.md) for the plugin workflow.
 

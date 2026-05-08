@@ -6,3 +6,6 @@ __pycache__/
 *.pyd
 *.so
 *.dylib
+RXMesh.log
+.polyscope.ini
+imgui.ini

@@ -8,7 +8,7 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "PyRXMesh"
 version = "0.2.1"
-description = "Python bindings for RXMesh GPU triangle mesh processing"
+description = "Python bindings for RXMesh, a CUDA/C++ library for processing on the GPU."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
