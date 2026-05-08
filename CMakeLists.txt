@@ -26,7 +26,7 @@ if(NOT pybind11_FOUND)
     FetchContent_MakeAvailable(pybind11)
 endif()
 
-set(PYRXMESH_RXMESH_GIT_REPOSITORY "https://github.com/owensgroup/RXMesh.git" CACHE STRING "RXMesh Git repository URL")
+set(PYRXMESH_RXMESH_GIT_REPO "https://github.com/owensgroup/RXMesh.git" CACHE STRING "RXMesh Git repository URL")
 set(PYRXMESH_RXMESH_GIT_TAG "main" CACHE STRING "RXMesh Git tag, branch, or commit to build against")
 set(PYRXMESH_RXMESH_SOURCE_DIR "" CACHE PATH "Optional local RXMesh source checkout. If set, Git fetch is skipped.")
 set(PYRXMESH_USE_POLYSCOPE "ON" CACHE BOOL "Build RXMesh with Polyscope visualization support")
@@ -39,7 +39,7 @@ set(PYRXMESH_USE_SUITESPARSE "OFF" CACHE BOOL "Build RXMesh with SuiteSparse sup
 set(PYRXMESH_PLUGIN_ABI_VERSION 2)
 string(REPLACE "\\" "/" PYRXMESH_RXMESH_SOURCE_DIR_TAG "${PYRXMESH_RXMESH_SOURCE_DIR}")
 set(PYRXMESH_BUILD_CONFIG_TAG
-    "abi=${PYRXMESH_PLUGIN_ABI_VERSION},pyrxmesh=${PROJECT_VERSION},rxmesh_repo=${PYRXMESH_RXMESH_GIT_REPOSITORY},rxmesh_tag=${PYRXMESH_RXMESH_GIT_TAG},rxmesh_source=${PYRXMESH_RXMESH_SOURCE_DIR_TAG},polyscope=${PYRXMESH_USE_POLYSCOPE},double=${PYRXMESH_USE_DOUBLE},cudss=${PYRXMESH_USE_CUDSS},suitesparse=${PYRXMESH_USE_SUITESPARSE},cuda_arch=${CMAKE_CUDA_ARCHITECTURES}"
+    "abi=${PYRXMESH_PLUGIN_ABI_VERSION},pyrxmesh=${PROJECT_VERSION},rxmesh_repo=${PYRXMESH_RXMESH_GIT_REPO},rxmesh_tag=${PYRXMESH_RXMESH_GIT_TAG},rxmesh_source=${PYRXMESH_RXMESH_SOURCE_DIR_TAG},polyscope=${PYRXMESH_USE_POLYSCOPE},double=${PYRXMESH_USE_DOUBLE},cudss=${PYRXMESH_USE_CUDSS},suitesparse=${PYRXMESH_USE_SUITESPARSE},cuda_arch=${CMAKE_CUDA_ARCHITECTURES}"
 )
 
 # RXMesh uses these option names internally. Force them before adding RXMesh so PyRXMesh controls the dependency build in both Git and local-source modes.
@@ -58,7 +58,7 @@ if(PYRXMESH_RXMESH_SOURCE_DIR)
     add_subdirectory("${PYRXMESH_RXMESH_SOURCE_DIR_ABS}" "${CMAKE_BINARY_DIR}/_deps/rxmesh-build")
 else()
     FetchContent_Declare(rxmesh
-        GIT_REPOSITORY "${PYRXMESH_RXMESH_GIT_REPOSITORY}"
+        GIT_REPOSITORY "${PYRXMESH_RXMESH_GIT_REPO}"
         GIT_TAG "${PYRXMESH_RXMESH_GIT_TAG}"
         GIT_SHALLOW TRUE
     )

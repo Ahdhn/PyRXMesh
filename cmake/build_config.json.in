@@ -2,7 +2,7 @@
   "abi_version": "@PYRXMESH_PLUGIN_ABI_VERSION@",
   "pyrxmesh_version": "@PROJECT_VERSION@",
   "build_config_tag": "@PYRXMESH_BUILD_CONFIG_TAG@",
-  "rxmesh_git_repository": "@PYRXMESH_RXMESH_GIT_REPOSITORY@",
+  "rxmesh_git_repository": "@PYRXMESH_RXMESH_GIT_REPO@",
   "rxmesh_git_tag": "@PYRXMESH_RXMESH_GIT_TAG@",
   "rxmesh_source_dir": "@PYRXMESH_RXMESH_SOURCE_DIR_TAG@",
   "use_polyscope": "@PYRXMESH_USE_POLYSCOPE@",

@@ -42,7 +42,7 @@ build.targets = ["_rxmesh"]
 install.components = ["python"]
 
 [tool.scikit-build.cmake.define]
-PYRXMESH_RXMESH_GIT_REPOSITORY = "https://github.com/owensgroup/RXMesh.git"
+PYRXMESH_RXMESH_GIT_REPO = "https://github.com/owensgroup/RXMesh.git"
 PYRXMESH_RXMESH_GIT_TAG = "main"
 PYRXMESH_RXMESH_SOURCE_DIR = ""
 PYRXMESH_USE_POLYSCOPE = "ON"
