@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-import pyrxmesh as rxmesh
+import pyrxmesh as rx
 
 
 def main() -> None:
@@ -11,8 +11,8 @@ def main() -> None:
     parser.add_argument("--device-id", type=int, default=0, help="CUDA device id.")
     args = parser.parse_args()
 
-    rxmesh.init(args.device_id)
-    mesh = rxmesh.RXMeshStatic(args.input)
+    rx.init(args.device_id)
+    mesh = rx.RXMeshStatic(args.input)
 
     print("RXMeshStatic(")
     print(f"  vertices={mesh.num_vertices},")
@@ -24,7 +24,7 @@ def main() -> None:
     print(f"  edge_manifold={mesh.is_edge_manifold()}")
     print(")")
 
-    rxmesh.show()
+    rx.show()
 
 
 if __name__ == "__main__":

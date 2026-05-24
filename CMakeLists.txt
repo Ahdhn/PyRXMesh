@@ -96,9 +96,22 @@ else()
     set(PYRXMESH_POLYSCOPE_SOURCE_DIR "")
 endif()
 
-pybind11_add_module(_rxmesh MODULE src/bindings.cu)
+pybind11_add_module(_rxmesh MODULE
+    src/bindings.cu
+    src/bindings/attributes.cu
+    src/bindings/core.cu
+    src/bindings/dense_matrix.cu
+    src/bindings/geometry.cu
+    src/bindings/handles.cu
+    src/bindings/mesh.cu
+    src/bindings/sparse_matrix.cu
+)
 target_link_libraries(_rxmesh PRIVATE RXMesh)
-target_include_directories(_rxmesh PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_include_directories(_rxmesh
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+)
 target_compile_features(_rxmesh PRIVATE cxx_std_17)
 target_compile_definitions(_rxmesh
     PRIVATE PYRXMESH_PLUGIN_ABI_VERSION=${PYRXMESH_PLUGIN_ABI_VERSION}
@@ -115,6 +128,10 @@ if(WIN32)
         PRIVATE NOMINMAX
         PRIVATE _CRT_SECURE_NO_WARNINGS
     )
+endif()
+
+if(PYRXMESH_USE_CUDSS)
+    target_compile_definitions(_rxmesh PRIVATE USE_CUDSS)
 endif()
 
 install(TARGETS _rxmesh

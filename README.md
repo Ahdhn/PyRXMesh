@@ -88,20 +88,3 @@ Supported dtypes are `float32`, `float64`, `int32`, and `int8`.
 Most PyRXMesh workflows should stay in Python. For RXMesh operations that require CUDA device lambdas, PyRXMesh also supports small compiled plugin packages that operate on PyRXMesh meshes and attributes without extra Python-side copies. Plugins build against the installed PyRXMesh package and reuse its RXMesh build, so plugin rebuilds are much smaller after PyRXMesh is installed.
 
 See [CUSTOM_CUDA_PLUGINS.md](CUSTOM_CUDA_PLUGINS.md) for the plugin workflow.
-
-## Incremental Builds
-
-Builds reuse a persistent scikit-build-core build directory:
-
-```text
-build/{wheel_tag}
-```
-
-The first install for a Python/platform/RXMesh tag combination is a full build. Subsequent installs with the same settings should be incremental. For the fastest developer loop, disable build isolation after installing the build requirements into the conda environment:
-
-```bash
-python -m pip install scikit-build-core pybind11
-python -m pip install -v --no-build-isolation . -Ccmake.define.PYRXMESH_RXMESH_GIT_TAG=<tag-or-commit>
-```
-
-To force a clean rebuild, delete the matching `build/<wheel_tag>` directory.

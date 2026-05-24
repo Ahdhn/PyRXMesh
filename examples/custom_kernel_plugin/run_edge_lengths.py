@@ -1,27 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
-THIS_DIR = Path(__file__).resolve().parent
-REPO_ROOT = THIS_DIR.parents[1]
-SHADOW_PATHS = {THIS_DIR, REPO_ROOT}
-
-
-def _is_shadow_path(path: str) -> bool:
-    resolved = Path(path).resolve() if path else Path.cwd().resolve()
-    return resolved in SHADOW_PATHS
-
-
-sys.path = [
-    path
-    for path in sys.path
-    if not _is_shadow_path(path)
-]
-
-import pyrxmesh as rx  # noqa: E402
-import rxmesh_edge_lengths  # noqa: E402
+import pyrxmesh as rx
+import rxmesh_edge_lengths
 
 
 def main() -> None:

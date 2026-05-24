@@ -19,6 +19,6 @@ minimum-version = "0.12"
 cmake.version = ">=3.24,<4"
 cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
-wheel.packages = ["rxmesh_edge_lengths"]
+wheel.packages = ["src/rxmesh_edge_lengths"]
 build.targets = ["_rxmesh_edge_lengths"]
 install.components = ["python"]

@@ -40,7 +40,7 @@ minimum-version = "0.12"
 cmake.version = ">=3.24,<4"
 cmake.build-type = "Release"
 build-dir = "build/{{wheel_tag}}"
-wheel.packages = ["{module}"]
+wheel.packages = ["src/{module}"]
 build.targets = ["_{module}"]
 install.components = ["python"]
 """
@@ -140,13 +140,34 @@ def _readme(module: str) -> str:
 
 Custom CUDA kernels for PyRXMesh.
 
+## Layout
+
+```text
+{module}/
+  pyproject.toml
+  CMakeLists.txt
+  src/
+    {module}.cu             # CUDA source for the plugin
+    {module}/__init__.py    # Python package source
+  my_script.py              # your own scripts can live here
+```
+
+Python sources live under `src/`, so the plugin root never shadows the
+installed package. Run scripts can sit at the plugin root and `import {module}`
+directly with no `sys.path` setup.
+
+## Build
+
 Build inside the same conda environment where `pyrxmesh` is installed:
 
 ```bash
 python -m pip install -v --no-build-isolation .
 ```
 
-Use from Python:
+After installation, `{module}` is available from any directory in the env,
+just like `pyrxmesh`.
+
+## Use from Python
 
 ```python
 import pyrxmesh as rx
@@ -176,7 +197,7 @@ def init_plugin(module: str, output_dir: Path, force: bool = False) -> Path:
     _write(root / "CMakeLists.txt", _cmake(module), force)
     _write(root / "README.md", _readme(module), force)
     _write(root / "src" / f"{module}.cu", _source(module), force)
-    _write(root / module / "__init__.py", _init(module), force)
+    _write(root / "src" / module / "__init__.py", _init(module), force)
 
     return root
 

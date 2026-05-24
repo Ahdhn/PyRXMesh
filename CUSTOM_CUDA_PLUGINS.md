@@ -12,7 +12,28 @@ cd my_kernels
 python -m pip install -v --no-build-isolation .
 ```
 
+The scaffolder generates a Python "src-layout" tree:
+
+```text
+my_kernels/
+  pyproject.toml
+  CMakeLists.txt
+  README.md
+  src/
+    my_kernels.cu             # CUDA source for the plugin
+    my_kernels/__init__.py    # Python package source
+  my_script.py                # your own scripts can live here
+```
+
 The generated plugin builds against the `pyrxmesh` package installed in the active Python environment. It reuses the RXMesh headers and library installed with PyRXMesh, so plugin builds should compile only the plugin code instead of rebuilding RXMesh. The plugin also checks the PyRXMesh/RXMesh build configuration at runtime.
+
+After `pip install`, `my_kernels` is in your environment's site-packages and importable from any directory, exactly like `pyrxmesh` itself.
+
+### Why src-layout?
+
+Python's `sys.path[0]` is always the directory containing the script you ran. If a plugin's Python source package sits next to that script (the natural place to put it), `import my_kernels` resolves to the **source** directory rather than the installed wheel. Because the compiled CUDA extension (`_my_kernels.<ext>`) lives only in the installed wheel, the import then fails.
+
+The src-layout sidesteps this by tucking Python sources under `src/my_kernels/`. The plugin root contains no importable `my_kernels/` directory, so `import my_kernels` always resolves to site-packages with the compiled extension alongside it. No `sys.path` munging or `cd` discipline is required.
 
 
 ## Use a Plugin From Python
@@ -51,8 +72,19 @@ Use `pyrxmesh::for_each` for RXMesh query operations from plugin modules. It del
 
 ## Examples
 
-The repository includes a complete custom-kernel plugin example in [`examples/custom_kernel_plugin`](examples/custom_kernel_plugin). It computes one scalar edge-length attribute on the GPU using an RXMesh `Op::EV` device
-lambda, then reads the result back from Python.
+The repository includes a complete custom-kernel plugin example in [`examples/custom_kernel_plugin`](examples/custom_kernel_plugin) using the same src-layout the scaffolder emits:
+
+```text
+examples/custom_kernel_plugin/
+  pyproject.toml
+  CMakeLists.txt
+  run_edge_lengths.py
+  src/
+    rxmesh_edge_lengths.cu
+    rxmesh_edge_lengths/__init__.py
+```
+
+It computes one scalar edge-length attribute on the GPU using an RXMesh `Op::EV` device lambda, then reads the result back from Python.
 
 Build the example plugin from the PyRXMesh repository root:
 
@@ -69,3 +101,21 @@ python examples/custom_kernel_plugin/run_edge_lengths.py --input mesh.obj
 ```
 
 The example package shows the intended split where Python loads the mesh and owns the workflow while `src/rxmesh_edge_lengths.cu` contains only the performance critical RXMesh lambda.
+
+
+## Incremental Builds
+
+Builds reuse a persistent scikit-build-core build directory:
+
+```text
+build/{wheel_tag}
+```
+
+The first install for a Python/platform/RXMesh tag combination is a full build. Subsequent installs with the same settings should be incremental. For the fastest developer loop, disable build isolation after installing the build requirements into the conda environment:
+
+```bash
+python -m pip install scikit-build-core pybind11
+python -m pip install -v --no-build-isolation . -Ccmake.define.PYRXMESH_RXMESH_GIT_TAG=<tag-or-commit>
+```
+
+To force a clean rebuild, delete the matching `build/<wheel_tag>` directory.
