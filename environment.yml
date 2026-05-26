@@ -8,6 +8,7 @@ dependencies:
   - ninja
   - git
   - numpy>=1.26
+  - pytest
   - pip:
       - scikit-build-core>=0.12
       - pybind11>=2.13
