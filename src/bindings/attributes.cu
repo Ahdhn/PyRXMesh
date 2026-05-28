@@ -16,6 +16,44 @@ struct AttributeDlpackContext
     int64_t                          strides[2];
 };
 
+template <typename T>
+__global__ void copy_dlpack_to_soa_attribute_kernel(T*       dst,
+                                                    const T* src,
+                                                    int64_t  rows,
+                                                    int64_t  cols,
+                                                    int64_t  stride0,
+                                                    int64_t  stride1)
+{
+    const int64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int64_t n   = rows * cols;
+    if (idx >= n) {
+        return;
+    }
+
+    const int64_t row     = idx % rows;
+    const int64_t col     = idx / rows;
+    dst[col * rows + row] = src[row * stride0 + col * stride1];
+}
+
+template <typename T>
+__global__ void copy_dlpack_to_row_major_kernel(T*       dst,
+                                                const T* src,
+                                                int64_t  rows,
+                                                int64_t  cols,
+                                                int64_t  stride0,
+                                                int64_t  stride1)
+{
+    const int64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const int64_t n   = rows * cols;
+    if (idx >= n) {
+        return;
+    }
+
+    const int64_t row     = idx / cols;
+    const int64_t col     = idx % cols;
+    dst[row * cols + col] = src[row * stride0 + col * stride1];
+}
+
 dlpack::DLDataType attribute_dlpack_dtype(DType dtype)
 {
     switch (dtype) {
@@ -31,6 +69,12 @@ dlpack::DLDataType attribute_dlpack_dtype(DType dtype)
             throw std::invalid_argument(
                 "Attribute.to_dlpack() encountered an unsupported dtype.");
     }
+}
+
+bool dlpack_dtype_equal(dlpack::DLDataType lhs, dlpack::DLDataType rhs)
+{
+    return lhs.code == rhs.code && lhs.bits == rhs.bits &&
+           lhs.lanes == rhs.lanes;
 }
 
 void require_attribute_tensor_view(const PyAttributeBase& self,
@@ -144,6 +188,250 @@ py::tuple attribute_dlpack_device(const PyAttributeBase& self)
     throw std::runtime_error("Attribute has no allocated memory.");
 }
 
+py::object acquire_dlpack_capsule(py::object source)
+{
+    if (PyCapsule_IsValid(source.ptr(), "dltensor")) {
+        return source;
+    }
+    if (!py::hasattr(source, "__dlpack__")) {
+        throw std::invalid_argument(
+            "Attribute.from_dlpack_copy() expects a DLPack capsule or an "
+            "object with __dlpack__().");
+    }
+    return source.attr("__dlpack__")();
+}
+
+void mark_dlpack_capsule_consumed(py::object               capsule,
+                                  dlpack::DLManagedTensor* managed)
+{
+    if (managed && managed->deleter) {
+        managed->deleter(managed);
+    }
+    PyCapsule_SetName(capsule.ptr(), "used_dltensor");
+    PyCapsule_SetDestructor(capsule.ptr(), nullptr);
+}
+
+void validate_dlpack_attribute_shape(const PyAttributeBase&  self,
+                                     const dlpack::DLTensor& tensor)
+{
+    if (tensor.ndim != 1 && tensor.ndim != 2) {
+        throw std::invalid_argument(
+            "Attribute.from_dlpack_copy() expects a 1D or 2D tensor.");
+    }
+
+    if (tensor.shape[0] != static_cast<int64_t>(self.element_count())) {
+        throw std::invalid_argument(
+            "Attribute.from_dlpack_copy() row count does not match the mesh "
+            "element count.");
+    }
+
+    if (tensor.ndim == 1 && self.dim() != 1) {
+        throw std::invalid_argument(
+            "Attribute.from_dlpack_copy() received a 1D tensor for a "
+            "multi-column attribute.");
+    }
+
+    if (tensor.ndim == 2 &&
+        tensor.shape[1] != static_cast<int64_t>(self.dim())) {
+        throw std::invalid_argument(
+            "Attribute.from_dlpack_copy() column count does not match the "
+            "attribute dimension.");
+    }
+}
+
+template <typename T, typename HandleT>
+void copy_host_flat_to_attribute(rxmesh::Attribute<T, HandleT>& attr,
+                                 const T*                       src,
+                                 int64_t                        stride0,
+                                 int64_t                        stride1)
+{
+    for (uint32_t i = 0; i < attr.rows(); ++i) {
+        for (uint32_t j = 0; j < attr.cols(); ++j) {
+            attr(i, j) = src[static_cast<int64_t>(i) * stride0 +
+                             static_cast<int64_t>(j) * stride1];
+        }
+    }
+}
+
+template <typename T>
+void copy_cuda_dlpack_to_host_flat(const dlpack::DLTensor& tensor,
+                                   int64_t                 rows,
+                                   int64_t                 cols,
+                                   int64_t                 stride0,
+                                   int64_t                 stride1,
+                                   std::vector<T>&         host)
+{
+    const auto* src = reinterpret_cast<const T*>(
+        static_cast<const char*>(tensor.data) + tensor.byte_offset);
+    const int64_t n = rows * cols;
+
+    T* d_compact = nullptr;
+    CUDA_ERROR(cudaMalloc(&d_compact, static_cast<size_t>(n) * sizeof(T)));
+
+    constexpr int threads = 256;
+    copy_dlpack_to_row_major_kernel<T>
+        <<<static_cast<int>((n + threads - 1) / threads), threads>>>(
+            d_compact, src, rows, cols, stride0, stride1);
+    CUDA_ERROR(cudaGetLastError());
+
+    host.resize(static_cast<size_t>(n));
+
+    CUDA_ERROR(cudaMemcpy(host.data(),
+                          d_compact,
+                          static_cast<size_t>(n) * sizeof(T),
+                          cudaMemcpyDeviceToHost));
+    CUDA_ERROR(cudaDeviceSynchronize());
+    CUDA_ERROR(cudaFree(d_compact));
+}
+
+template <typename T, typename HandleT>
+void copy_dlpack_to_attribute(PyAttribute<T, HandleT>& self,
+                              const dlpack::DLTensor&  tensor,
+                              rxmesh::locationT        target)
+{
+    validate_dlpack_attribute_shape(self, tensor);
+
+    const auto expected_dtype = attribute_dlpack_dtype(self.dtype());
+    if (!dlpack_dtype_equal(tensor.dtype, expected_dtype)) {
+        throw std::invalid_argument(
+            "Attribute.from_dlpack_copy() tensor dtype does not match the "
+            "attribute dtype.");
+    }
+
+    if ((target & (rxmesh::HOST | rxmesh::DEVICE)) == rxmesh::LOCATION_NONE) {
+        throw std::invalid_argument(
+            "Attribute.from_dlpack_copy() target must include Location.HOST "
+            "or Location.DEVICE.");
+    }
+
+    const int64_t rows = static_cast<int64_t>(self.element_count());
+    const int64_t cols = static_cast<int64_t>(self.dim());
+    const int64_t stride0 =
+        tensor.strides ? tensor.strides[0] : (tensor.ndim == 1 ? 1 : cols);
+    const int64_t stride1 =
+        tensor.ndim == 1 ? 1 : (tensor.strides ? tensor.strides[1] : 1);
+
+    if (tensor.device.device_type == dlpack::kDLCPU) {
+        const auto* src = reinterpret_cast<const T*>(
+            static_cast<const char*>(tensor.data) + tensor.byte_offset);
+        ensure_host_writable(*self.attr);
+        copy_host_flat_to_attribute(*self.attr, src, stride0, stride1);
+        if ((target & rxmesh::DEVICE) == rxmesh::DEVICE) {
+            self.attr->move(rxmesh::HOST, rxmesh::DEVICE);
+        }
+        return;
+    }
+
+    if (tensor.device.device_type != dlpack::kDLCUDA) {
+        throw std::invalid_argument(
+            "Attribute.from_dlpack_copy() supports CPU and CUDA DLPack "
+            "tensors.");
+    }
+
+    if ((target & rxmesh::DEVICE) == rxmesh::DEVICE &&
+        self.attr->is_tensor_layout()) {
+        ensure_allocated(*self.attr, rxmesh::DEVICE);
+
+        const auto* src = reinterpret_cast<const T*>(
+            static_cast<const char*>(tensor.data) + tensor.byte_offset);
+        constexpr int threads = 256;
+        const int64_t n       = rows * cols;
+        copy_dlpack_to_soa_attribute_kernel<T>
+            <<<static_cast<int>((n + threads - 1) / threads), threads>>>(
+                self.attr->data(rxmesh::DEVICE),
+                src,
+                rows,
+                cols,
+                stride0,
+                stride1);
+        CUDA_ERROR(cudaGetLastError());
+        CUDA_ERROR(cudaDeviceSynchronize());
+
+        if ((target & rxmesh::HOST) == rxmesh::HOST) {
+            self.attr->move(rxmesh::DEVICE, rxmesh::HOST);
+        }
+        return;
+    }
+    std::vector<T> host(static_cast<size_t>(rows * cols));
+    copy_cuda_dlpack_to_host_flat<T>(
+        tensor, rows, cols, stride0, stride1, host);
+    ensure_host_writable(*self.attr);
+    copy_host_flat_to_attribute(*self.attr, host.data(), cols, 1);
+    if ((target & rxmesh::DEVICE) == rxmesh::DEVICE) {
+        self.attr->move(rxmesh::HOST, rxmesh::DEVICE);
+    }
+}
+
+template <typename T, typename HandleT>
+bool try_copy_dlpack_to_attribute(PyAttributeBase&        self,
+                                  const dlpack::DLTensor& tensor,
+                                  rxmesh::locationT       target)
+{
+    auto* typed = dynamic_cast<PyAttribute<T, HandleT>*>(&self);
+    if (!typed) {
+        return false;
+    }
+    copy_dlpack_to_attribute(*typed, tensor, target);
+    return true;
+}
+
+void attribute_from_dlpack_copy(PyAttributeBase& self,
+                                py::object       source,
+                                int              target)
+{
+    py::object capsule = acquire_dlpack_capsule(std::move(source));
+
+    auto* managed = static_cast<dlpack::DLManagedTensor*>(
+        PyCapsule_GetPointer(capsule.ptr(), "dltensor"));
+
+    if (!managed) {
+        PyErr_Clear();
+        throw std::invalid_argument(
+            "Attribute.from_dlpack_copy() received an invalid DLPack "
+            "capsule.");
+    }
+
+    const auto dst = parse_location(target);
+
+    try {
+        const dlpack::DLTensor& tensor = managed->dl_tensor;
+        if (try_copy_dlpack_to_attribute<float, rxmesh::VertexHandle>(
+                self, tensor, dst) ||
+            try_copy_dlpack_to_attribute<double, rxmesh::VertexHandle>(
+                self, tensor, dst) ||
+            try_copy_dlpack_to_attribute<int32_t, rxmesh::VertexHandle>(
+                self, tensor, dst) ||
+            try_copy_dlpack_to_attribute<int8_t, rxmesh::VertexHandle>(
+                self, tensor, dst) ||
+            try_copy_dlpack_to_attribute<float, rxmesh::EdgeHandle>(
+                self, tensor, dst) ||
+            try_copy_dlpack_to_attribute<double, rxmesh::EdgeHandle>(
+                self, tensor, dst) ||
+            try_copy_dlpack_to_attribute<int32_t, rxmesh::EdgeHandle>(
+                self, tensor, dst) ||
+            try_copy_dlpack_to_attribute<int8_t, rxmesh::EdgeHandle>(
+                self, tensor, dst) ||
+            try_copy_dlpack_to_attribute<float, rxmesh::FaceHandle>(
+                self, tensor, dst) ||
+            try_copy_dlpack_to_attribute<double, rxmesh::FaceHandle>(
+                self, tensor, dst) ||
+            try_copy_dlpack_to_attribute<int32_t, rxmesh::FaceHandle>(
+                self, tensor, dst) ||
+            try_copy_dlpack_to_attribute<int8_t, rxmesh::FaceHandle>(
+                self, tensor, dst)) {
+            mark_dlpack_capsule_consumed(capsule, managed);
+            return;
+        }
+
+        throw std::invalid_argument(
+            "Attribute.from_dlpack_copy() received an unsupported attribute "
+            "type.");
+    } catch (...) {
+        mark_dlpack_capsule_consumed(capsule, managed);
+        throw;
+    }
+}
+
 template <typename T, typename HandleT>
 void bind_attribute_class(py::module_& m, const char* class_name)
 {
@@ -211,6 +499,11 @@ void register_attribute(py::module_& m)
              py::arg("values"),
              py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
              "Copy a NumPy-compatible array into RXMesh attribute memory.")
+        .def("from_dlpack_copy",
+             &attribute_from_dlpack_copy,
+             py::arg("source"),
+             py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
+             "Copy a CPU or CUDA DLPack tensor into RXMesh attribute memory.")
         .def("to_matrix_copy",
              &PyAttributeBase::to_matrix_copy,
              "Copy this attribute into a DenseMatrix using RXMesh handle "
@@ -268,10 +561,14 @@ void register_attribute(py::module_& m)
              &PyAttributeBase::capsule,
              "Return a low-level capsule for compiled PyRXMesh plugins.");
 
-    bind_attribute_class<float, rxmesh::VertexHandle>(m, "VertexAttributeFloat32");
-    bind_attribute_class<double, rxmesh::VertexHandle>(m, "VertexAttributeFloat64");
-    bind_attribute_class<int32_t, rxmesh::VertexHandle>(m, "VertexAttributeInt32");
-    bind_attribute_class<int8_t, rxmesh::VertexHandle>(m, "VertexAttributeInt8");
+    bind_attribute_class<float, rxmesh::VertexHandle>(m,
+                                                      "VertexAttributeFloat32");
+    bind_attribute_class<double, rxmesh::VertexHandle>(
+        m, "VertexAttributeFloat64");
+    bind_attribute_class<int32_t, rxmesh::VertexHandle>(m,
+                                                        "VertexAttributeInt32");
+    bind_attribute_class<int8_t, rxmesh::VertexHandle>(m,
+                                                       "VertexAttributeInt8");
 
     bind_attribute_class<float, rxmesh::EdgeHandle>(m, "EdgeAttributeFloat32");
     bind_attribute_class<double, rxmesh::EdgeHandle>(m, "EdgeAttributeFloat64");
