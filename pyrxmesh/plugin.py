@@ -1,5 +1,3 @@
-"""Scaffold PyRXMesh custom CUDA plugin packages."""
-
 from __future__ import annotations
 
 import argparse

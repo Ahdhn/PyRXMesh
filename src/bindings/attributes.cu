@@ -135,7 +135,7 @@ py::capsule attribute_to_dlpack(std::shared_ptr<PyAttributeBase> self,
     require_attribute_tensor_view(*self, loc, "Attribute.to_dlpack()");
 
     if (loc == rxmesh::DEVICE) {
-        CUDA_ERROR(cudaDeviceSynchronize());
+        CUDA_ERROR(cudaStreamSynchronize(nullptr));
     }
 
     auto* managed  = new dlpack::DLManagedTensor();
@@ -280,7 +280,7 @@ void copy_cuda_dlpack_to_host_flat(const dlpack::DLTensor& tensor,
                           d_compact,
                           static_cast<size_t>(n) * sizeof(T),
                           cudaMemcpyDeviceToHost));
-    CUDA_ERROR(cudaDeviceSynchronize());
+    CUDA_ERROR(cudaStreamSynchronize(nullptr));
     CUDA_ERROR(cudaFree(d_compact));
 }
 
@@ -345,7 +345,7 @@ void copy_dlpack_to_attribute(PyAttribute<T, HandleT>& self,
                 stride0,
                 stride1);
         CUDA_ERROR(cudaGetLastError());
-        CUDA_ERROR(cudaDeviceSynchronize());
+        CUDA_ERROR(cudaStreamSynchronize(nullptr));
 
         if ((target & rxmesh::HOST) == rxmesh::HOST) {
             self.attr->move(rxmesh::DEVICE, rxmesh::HOST);

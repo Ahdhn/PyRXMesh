@@ -235,7 +235,10 @@ struct PyAttribute final : PyAttributeBase
 
     void move(int source, int target) override
     {
-        attr->move(parse_location(source), parse_location(target));
+        const auto src = parse_location(source);
+        const auto dst = parse_location(target);
+        attr->move(src, dst);
+        synchronize_device_transfer(src, dst);
     }
 
 
