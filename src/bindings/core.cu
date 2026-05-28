@@ -13,17 +13,18 @@ void register_module_core(py::module_& m)
         []() { return std::string(build_config_tag); },
         "Return the RXMesh/PyRXMesh build configuration tag.");
 
-    py::module_ location = add_constants_module(
-        m, "Location", "RXMesh memory location bitmask constants.");
+    py::module_ location = m.def_submodule(
+        "Location", "RXMesh memory location bitmask constants.");
     location.attr("NONE")   = py::int_(static_cast<int>(rxmesh::LOCATION_NONE));
     location.attr("HOST")   = py::int_(static_cast<int>(rxmesh::HOST));
     location.attr("DEVICE") = py::int_(static_cast<int>(rxmesh::DEVICE));
     location.attr("ALL")    = py::int_(static_cast<int>(rxmesh::LOCATION_ALL));
 
-    py::module_ layout = add_constants_module(
-        m, "Layout", "RXMesh attribute memory layout constants.");
-    layout.attr("AoS") = py::int_(static_cast<int>(rxmesh::AoS));
-    layout.attr("SoA") = py::int_(static_cast<int>(rxmesh::SoA));
+    py::module_ layout =
+        m.def_submodule("Layout", "RXMesh attribute memory layout constants.");
+    layout.attr("AoS")   = py::int_(static_cast<int>(rxmesh::AoS));
+    layout.attr("AoSoA") = py::int_(static_cast<int>(rxmesh::AoSoA));
+    layout.attr("SoA")   = py::int_(static_cast<int>(rxmesh::SoA));
 
     py::enum_<ElementKind>(m, "ElementKind")
         .value("Vertex", ElementKind::Vertex)
