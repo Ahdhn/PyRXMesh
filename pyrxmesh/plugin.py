@@ -178,7 +178,7 @@ coords = mesh.input_vertex_coordinates()
 edge_lengths = mesh.add_edge_attribute("edge_lengths", dtype="float32", dim=1)
 
 {module}.compute_edge_lengths(mesh, coords, edge_lengths)
-print(edge_lengths.to_numpy())
+print(edge_lengths.to_numpy_copy(source=rx.Location.DEVICE))
 ```
 """
 
