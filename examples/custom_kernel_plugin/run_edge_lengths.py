@@ -24,7 +24,7 @@ def main() -> None:
     )
 
     rxmesh_edge_lengths.compute_edge_lengths(mesh, coords, edge_lengths)
-    values = edge_lengths.to_numpy()
+    values = edge_lengths.to_numpy_copy(source=rx.Location.DEVICE)
 
     print(f"vertices: {mesh.num_vertices}")
     print(f"edges: {mesh.num_edges}")
