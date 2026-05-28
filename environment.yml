@@ -9,6 +9,7 @@ dependencies:
   - git
   - numpy>=1.26
   - pytest
+  - scipy
   - pip:
       - scikit-build-core>=0.12
       - pybind11>=2.13
