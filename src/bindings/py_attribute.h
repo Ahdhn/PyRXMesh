@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bindings/common.h"
+#include "bindings/py_dense_matrix.h"
 
 #include <unordered_map>
 
