@@ -1,6 +1,7 @@
 from pathlib import Path
 import numpy as np
 import pyrxmesh as rx
+import pytest
 
 try:
     rx.init()
@@ -128,6 +129,4 @@ def test_bounding_box_scale_and_save_patcher(tmp_path: Path) -> None:
     assert patcher_path.exists()
 
 if __name__ == "__main__":
-    import pytest
-
     raise SystemExit(pytest.main([__file__]))
