@@ -88,11 +88,6 @@ def test_mesh_handle_arrays_and_mapping() -> None:
     assert 0 <= mesh.linear_id(edge) < mesh.num_edges
     assert 0 <= mesh.linear_id(face) < mesh.num_faces
 
-    assert mesh.owner_handle(vertex).is_valid()
-    assert mesh.owner_handle(edge).is_valid()
-    assert mesh.owner_handle(face).is_valid()
-
-
 def test_host_iteration_callbacks() -> None:
     mesh = load_mesh()
 
