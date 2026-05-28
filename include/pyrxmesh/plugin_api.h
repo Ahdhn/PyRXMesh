@@ -42,16 +42,23 @@ enum class DType : uint32_t
 {
     Float32 = 1,
     Float64 = 2,
-    Int32   = 3,
-    Int8    = 4,
+    Int8    = 3,
+    UInt8   = 4,
+    Int16   = 5,
+    UInt16  = 6,
+    Int32   = 7,
+    UInt32  = 8,
+    Int64   = 9,
+    UInt64  = 10,
+
 };
 
 struct MeshCapsule
 {
-    uint32_t                 abi_version;
-    const char*              build_config;
-    rxmesh::RXMeshStatic*    mesh;
-    const rxmesh::Context*   context;
+    uint32_t               abi_version;
+    const char*            build_config;
+    rxmesh::RXMeshStatic*  mesh;
+    const rxmesh::Context* context;
     void (*prepare_launch_box)(rxmesh::RXMeshStatic* mesh,
                                rxmesh::Op            op,
                                uint32_t              block_threads,
@@ -131,10 +138,9 @@ struct element_kind_of<rxmesh::FaceHandle>
 inline void ensure_abi(const uint32_t abi_version, const char* build_config)
 {
     if (abi_version != PYRXMESH_PLUGIN_ABI_VERSION) {
-        throw std::runtime_error(
-            "PyRXMesh plugin ABI mismatch: plugin ABI " +
-            std::to_string(PYRXMESH_PLUGIN_ABI_VERSION) + ", object ABI " +
-            std::to_string(abi_version));
+        throw std::runtime_error("PyRXMesh plugin ABI mismatch: plugin ABI " +
+                                 std::to_string(PYRXMESH_PLUGIN_ABI_VERSION) +
+                                 ", object ABI " + std::to_string(abi_version));
     }
 
     if (std::string(build_config) != std::string(PYRXMESH_BUILD_CONFIG)) {
@@ -191,13 +197,14 @@ inline const rxmesh::Context& context(py::handle object)
 {
     MeshCapsule* data = mesh_capsule(object);
     if (!data->context) {
-        throw std::runtime_error("PyRXMesh mesh capsule contains a null context.");
+        throw std::runtime_error(
+            "PyRXMesh mesh capsule contains a null context.");
     }
     return *data->context;
 }
 
 template <rxmesh::Op op, uint32_t blockThreads, typename LambdaT>
-void for_each(py::handle mesh_object,
+void for_each(py::handle    mesh_object,
               const LambdaT user_lambda,
               const bool    oriented = false,
               cudaStream_t  stream   = NULL)
@@ -271,8 +278,9 @@ inline void require_compatible_runtime()
     const std::string runtime = runtime_build_config();
     if (runtime != std::string(PYRXMESH_BUILD_CONFIG)) {
         throw std::runtime_error(
-            "This PyRXMesh plugin was built against a different RXMesh/PyRXMesh "
-            "configuration. Rebuild the plugin in the active environment.");
+            "This PyRXMesh plugin was built against a different "
+            "RXMesh/PyRXMesh configuration. Rebuild the plugin in the active "
+            "environment.");
     }
 }
 
