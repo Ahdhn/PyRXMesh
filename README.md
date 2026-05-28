@@ -78,7 +78,7 @@ edge_lengths = mesh.add_edge_attribute("edge_lengths", dtype="float32", dim=1)
 velocity = mesh.add_vertex_attribute("velocity", dtype="float32", dim=3)
 
 velocity.reset(0.0, rx.Location.DEVICE)
-print(edge_lengths.to_numpy())  # copies from DEVICE to a NumPy array
+print(edge_lengths.to_numpy_copy(source=rx.Location.DEVICE))
 ```
 
 Supported dtypes are `float32`, `float64`, `int32`, and `int8`.
