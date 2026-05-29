@@ -15,6 +15,7 @@ dependencies = [
     "numpy>=1.26",
 ]
 license = { text = "BSD-2-Clause" }
+license-files = ["LICENSE"]
 authors = [
     { name = "Ahmed Mahmoud" },
 ]
@@ -38,8 +39,32 @@ cmake.version = ">=3.24,<4"
 cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["pyrxmesh"]
+wheel.license-files = ["LICENSE"]
 build.targets = ["_rxmesh"]
 install.components = ["python"]
+
+sdist.include = [
+    "CMakeLists.txt",
+    "LICENSE",
+    "README.md",
+    "CUSTOM_CUDA_PLUGINS.md",
+    "cmake/**",
+    "include/**",
+    "meshes/**",
+    "pyrxmesh/**",
+    "src/**",
+    "tests/**",
+]
+sdist.exclude = [
+    ".github/**",
+    ".pytest_cache/**",
+    ".vscode/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/*.log",
+    "build/**",
+    "examples/custom_kernel_plugin/build/**",
+]
 
 [tool.scikit-build.cmake.define]
 PYRXMESH_RXMESH_GIT_REPO = "https://github.com/owensgroup/RXMesh.git"
