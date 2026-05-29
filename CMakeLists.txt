@@ -102,6 +102,12 @@ set_target_properties(_rxmesh PROPERTIES
     CUDA_RESOLVE_DEVICE_SYMBOLS ON
 )
 
+if(UNIX AND NOT APPLE)
+    set_target_properties(_rxmesh PROPERTIES
+        INSTALL_RPATH "$ORIGIN;$ORIGIN/lib;$ORIGIN/bin"
+    )
+endif()
+
 if(WIN32)
     target_compile_definitions(_rxmesh
         PRIVATE _USE_MATH_DEFINES
