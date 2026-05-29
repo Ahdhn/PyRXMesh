@@ -368,15 +368,6 @@ struct PyAttribute final : PyAttributeBase
             const auto dst = parse_location(target);
             auto dense = matrix.template cast<std::shared_ptr<PyDenseMatrix>>();
 
-            if (dtype() != parse_dtype(dense->dtype()) ||
-                element_count() != static_cast<uint32_t>(dense->rows()) ||
-                dim() != static_cast<uint32_t>(dense->cols())) {
-                throw std::invalid_argument(
-                    "Attribute.from_matrix_copy() requires matching dtype and "
-                    "shape.");
-            }
-
-            dense->ensure_allocated(rxmesh::HOST);
             ensure_host_writable(*attr);
 
             std::visit(
