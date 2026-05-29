@@ -51,6 +51,51 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
         }
     }
 
+    PyDenseMatrix(std::shared_ptr<rxmesh::RXMeshStatic> mesh,
+                  std::string                           dtype,
+                  int                                   rows,
+                  int                                   cols,
+                  int                                   location,
+                  std::string                           order)
+        : allocated(parse_location(location))
+    {
+        if (!mesh) {
+            throw std::invalid_argument(
+                "DenseMatrix mesh-aware constructor requires a mesh.");
+        }
+        if (rows <= 0 || cols <= 0) {
+            throw std::invalid_argument(
+                "DenseMatrix rows and cols must be positive.");
+        }
+        if (order != "col_major" && order != "column_major" && order != "F") {
+            throw std::invalid_argument(
+                "DenseMatrix currently supports only col_major order.");
+        }
+
+        const DType parsed_dtype = parse_dtype(dtype);
+        const auto  loc          = parse_location(location);
+        switch (parsed_dtype) {
+            case DType::Float32:
+                matrix = std::make_shared<
+                    rxmesh::DenseMatrix<float, Eigen::ColMajor>>(
+                    *mesh, rows, cols, loc);
+                break;
+            case DType::Float64:
+                matrix = std::make_shared<
+                    rxmesh::DenseMatrix<double, Eigen::ColMajor>>(
+                    *mesh, rows, cols, loc);
+                break;
+            case DType::Int32:
+                matrix = std::make_shared<
+                    rxmesh::DenseMatrix<int32_t, Eigen::ColMajor>>(
+                    *mesh, rows, cols, loc);
+                break;
+            default:
+                throw std::invalid_argument(
+                    "DenseMatrix supports float32, float64, and int32.");
+        }
+    }
+
     explicit PyDenseMatrix(DenseMatrixVariant mat, rxmesh::locationT location)
         : allocated(location), matrix(std::move(mat))
     {
@@ -117,28 +162,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
         return std::visit([](const auto& mat) { return mat->bytes(); }, matrix);
     }
 
-    void ensure_allocated(rxmesh::locationT location)
-    {
-        if (((location & rxmesh::HOST) == rxmesh::HOST) &&
-            !is_host_allocated()) {
-            if (!is_device_allocated()) {
-                throw std::runtime_error(
-                    "DenseMatrix has no allocation to copy from while ensuring "
-                    "HOST.");
-            }
-            move(rxmesh::DEVICE, rxmesh::HOST);
-        }
-        if (((location & rxmesh::DEVICE) == rxmesh::DEVICE) &&
-            !is_device_allocated()) {
-            if (!is_host_allocated()) {
-                throw std::runtime_error(
-                    "DenseMatrix has no allocation to copy from while ensuring "
-                    "DEVICE.");
-            }
-            move(rxmesh::HOST, rxmesh::DEVICE);
-        }
-    }
-
     void move(int source, int target)
     {
         move(parse_location(source), parse_location(target));
@@ -163,7 +186,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
     void reset(py::object value, int location)
     {
         const auto loc = parse_location(location);
-        ensure_allocated(loc);
         std::visit(
             [&](const auto& mat) {
                 using MatT = std::decay_t<decltype(mat)>;
@@ -175,10 +197,30 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
     void fill_random(double low, double high)
     {
-        ensure_allocated(rxmesh::HOST);
-        ensure_allocated(rxmesh::DEVICE);
         std::visit([&](const auto& mat) { mat->fill_random(low, high); },
                    matrix);
+    }
+
+    py::object value(py::object row_or_handle, int col)
+    {
+        return std::visit(
+            [&](const auto& mat) -> py::object {
+                using MatT = std::decay_t<decltype(mat)>;
+                using T    = typename MatT::element_type::Type;
+                return py::cast(read_value<T>(*mat, row_or_handle, col));
+            },
+            matrix);
+    }
+
+    void set_value(py::object row_or_handle, int col, py::object value)
+    {
+        std::visit(
+            [&](const auto& mat) {
+                using MatT = std::decay_t<decltype(mat)>;
+                using T    = typename MatT::element_type::Type;
+                write_value<T>(*mat, row_or_handle, col, value.cast<T>());
+            },
+            matrix);
     }
 
     py::array to_numpy(int source, bool copy)
@@ -188,7 +230,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             throw std::invalid_argument(
                 "DenseMatrix.to_numpy() only supports Location.HOST.");
         }
-        ensure_allocated(rxmesh::HOST);
 
         return std::visit(
             [&](const auto& mat) -> py::array {
@@ -220,7 +261,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
     void from_numpy(py::array values, int target)
     {
         const auto dst = parse_location(target);
-        ensure_allocated(rxmesh::HOST);
 
         std::visit(
             [&](const auto& mat) {
@@ -245,7 +285,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             matrix);
 
         if ((dst & rxmesh::DEVICE) == rxmesh::DEVICE) {
-            ensure_allocated(rxmesh::DEVICE);
             move(rxmesh::HOST, rxmesh::DEVICE);
         }
     }
@@ -260,8 +299,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
         const auto src = parse_location(source);
         const auto dst = parse_location(target);
-        other.ensure_allocated(src);
-        ensure_allocated(dst);
 
         std::visit(
             [&](auto& dst_mat) {
@@ -288,7 +325,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
     py::object norm2()
     {
-        ensure_allocated(rxmesh::DEVICE);
         return std::visit(
             [&](const auto& mat) -> py::object {
                 using MatT = std::decay_t<decltype(mat)>;
@@ -305,7 +341,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
     py::object abs_sum()
     {
-        ensure_allocated(rxmesh::DEVICE);
         return std::visit(
             [&](const auto& mat) -> py::object {
                 using MatT = std::decay_t<decltype(mat)>;
@@ -322,7 +357,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
     py::object abs_max()
     {
-        ensure_allocated(rxmesh::DEVICE);
         return std::visit(
             [&](const auto& mat) -> py::object {
                 using MatT = std::decay_t<decltype(mat)>;
@@ -339,7 +373,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
     py::object abs_min()
     {
-        ensure_allocated(rxmesh::DEVICE);
         move(rxmesh::DEVICE, rxmesh::HOST);
         return std::visit(
             [&](const auto& mat) -> py::object {
@@ -369,8 +402,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             throw std::invalid_argument(
                 "DenseMatrix.dot() requires matching dtype and shape.");
         }
-        ensure_allocated(rxmesh::DEVICE);
-        other.ensure_allocated(rxmesh::DEVICE);
 
         return std::visit(
             [&](const auto& lhs) -> py::object {
@@ -404,8 +435,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             throw std::invalid_argument(
                 "DenseMatrix.axpy() requires matching dtype and shape.");
         }
-        ensure_allocated(rxmesh::DEVICE);
-        x.ensure_allocated(rxmesh::DEVICE);
+
         std::visit(
             [&](auto& y_mat) {
                 using YMatT = std::decay_t<decltype(y_mat)>;
@@ -430,7 +460,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
     void multiply(py::object scalar)
     {
-        ensure_allocated(rxmesh::DEVICE);
         std::visit(
             [&](auto& mat) {
                 using MatT = std::decay_t<decltype(mat)>;
@@ -452,8 +481,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             throw std::invalid_argument(
                 "DenseMatrix.swap() requires matching dtype and shape.");
         }
-        ensure_allocated(rxmesh::DEVICE);
-        other.ensure_allocated(rxmesh::DEVICE);
+
         std::visit(
             [&](auto& lhs) {
                 using LhsMatT = std::decay_t<decltype(lhs)>;
@@ -528,8 +556,64 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
     void to_mtx(const std::string& file_name)
     {
-        ensure_allocated(rxmesh::HOST);
         std::visit([&](const auto& mat) { mat->to_mtx(file_name); }, matrix);
+    }
+
+   private:
+    int validate_row(int row) const
+    {
+        if (row < 0 || row >= rows()) {
+            throw std::out_of_range("DenseMatrix row index is out of range.");
+        }
+        return row;
+    }
+
+    template <typename T, typename MatT>
+    T read_value(MatT& mat, py::object row_or_handle, int col)
+    {
+        if (py::isinstance<py::int_>(row_or_handle)) {
+            return mat(validate_row(row_or_handle.cast<int>()), col);
+        }
+        if (py::isinstance<rxmesh::VertexHandle>(row_or_handle)) {
+            const auto handle = row_or_handle.cast<rxmesh::VertexHandle>();
+            return mat(handle, col);
+        }
+        if (py::isinstance<rxmesh::EdgeHandle>(row_or_handle)) {
+            const auto handle = row_or_handle.cast<rxmesh::EdgeHandle>();
+            return mat(handle, col);
+        }
+        if (py::isinstance<rxmesh::FaceHandle>(row_or_handle)) {
+            const auto handle = row_or_handle.cast<rxmesh::FaceHandle>();
+            return mat(handle, col);
+        }
+        throw py::type_error(
+            "DenseMatrix row must be an int or RXMesh handle.");
+    }
+
+    template <typename T, typename MatT>
+    void write_value(MatT& mat, py::object row_or_handle, int col, T value)
+    {
+        if (py::isinstance<py::int_>(row_or_handle)) {
+            mat(validate_row(row_or_handle.cast<int>()), col) = value;
+            return;
+        }
+        if (py::isinstance<rxmesh::VertexHandle>(row_or_handle)) {
+            const auto handle = row_or_handle.cast<rxmesh::VertexHandle>();
+            mat(handle, col)  = value;
+            return;
+        }
+        if (py::isinstance<rxmesh::EdgeHandle>(row_or_handle)) {
+            const auto handle = row_or_handle.cast<rxmesh::EdgeHandle>();
+            mat(handle, col)  = value;
+            return;
+        }
+        if (py::isinstance<rxmesh::FaceHandle>(row_or_handle)) {
+            const auto handle = row_or_handle.cast<rxmesh::FaceHandle>();
+            mat(handle, col)  = value;
+            return;
+        }
+        throw py::type_error(
+            "DenseMatrix row must be an int or RXMesh handle.");
     }
 };
 
