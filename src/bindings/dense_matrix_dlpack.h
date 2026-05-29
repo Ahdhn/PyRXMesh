@@ -47,6 +47,80 @@ struct DlpackContext
     int64_t                        strides[2];
 };
 
+inline int64_t cuda_dlpack_stream_value(py::object stream)
+{
+    if (stream.is_none()) {
+        return 1;
+    }
+    if (!py::isinstance<py::int_>(stream)) {
+        throw py::type_error("DLPack CUDA stream must be an integer or None.");
+    }
+    return stream.cast<int64_t>();
+}
+
+inline bool is_cuda_dlpack_no_sync_stream(py::object stream)
+{
+    //https://data-apis.org/array-api/2024.12/API_specification/generated/array_api.array.__dlpack__.html
+    return !stream.is_none() && cuda_dlpack_stream_value(std::move(stream)) == -1;
+}
+
+inline cudaStream_t parse_cuda_dlpack_stream(py::object stream)
+{
+    const int64_t value = cuda_dlpack_stream_value(std::move(stream));
+    if (value == 0) {
+        throw std::invalid_argument(
+            "DLPack CUDA stream value 0 is ambiguous and not supported.");
+    }
+    if (value == 1) {
+        return nullptr;
+    }
+    if (value == 2) {
+        return cudaStreamPerThread;
+    }
+    if (value > 2) {
+        return reinterpret_cast<cudaStream_t>(
+            static_cast<uintptr_t>(value));
+    }
+    throw std::invalid_argument("Unsupported DLPack CUDA stream value.");
+}
+
+inline py::object default_cuda_dlpack_stream_arg()
+{
+    return py::int_(1);
+}
+
+inline bool source_dlpack_device_is_cuda(py::object source)
+{
+    if (!py::hasattr(source, "__dlpack_device__")) {
+        return false;
+    }
+    py::tuple device = source.attr("__dlpack_device__")().cast<py::tuple>();
+    if (py::len(device) < 1) {
+        return false;
+    }
+    return device[0].cast<int>() == static_cast<int>(dlpack::kDLCUDA);
+}
+
+inline void synchronize_dense_dlpack_export_stream(py::object stream)
+{
+    using namespace rxmesh;
+    if (is_cuda_dlpack_no_sync_stream(stream)) {
+        return;
+    }
+
+    cudaStream_t consumer_stream = parse_cuda_dlpack_stream(std::move(stream));
+    if (consumer_stream == nullptr) {
+        CUDA_ERROR(cudaStreamSynchronize(nullptr));
+        return;
+    }
+
+    cudaEvent_t event = nullptr;
+    CUDA_ERROR(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));
+    CUDA_ERROR(cudaEventRecord(event, nullptr));
+    CUDA_ERROR(cudaStreamWaitEvent(consumer_stream, event, 0));
+    CUDA_ERROR(cudaEventDestroy(event));
+}
+
 template <typename T>
 __global__ void copy_dlpack_to_dense_col_major_kernel(T*       dst,
                                                       const T* src,
@@ -107,8 +181,13 @@ inline py::capsule dense_matrix_to_dlpack(std::shared_ptr<PyDenseMatrix> self,
             "DenseMatrix.to_dlpack() requires an existing DEVICE allocation.");
     }
 
-    if (loc == rxmesh::DEVICE) {
-        CUDA_ERROR(cudaStreamSynchronize(nullptr));
+    if (loc == rxmesh::HOST) {
+        if (!stream.is_none()) {
+            throw std::invalid_argument(
+                "DenseMatrix.to_dlpack(Location.HOST) requires stream=None.");
+        }
+    } else {
+        synchronize_dense_dlpack_export_stream(std::move(stream));
     }
 
     auto* managed  = new dlpack::DLManagedTensor();
@@ -181,6 +260,11 @@ inline py::object acquire_dlpack_capsule(py::object source)
             "DenseMatrix.from_dlpack_copy() expects a DLPack capsule or an "
             "object with __dlpack__().");
     }
+    if (source_dlpack_device_is_cuda(source)) {
+        py::dict kwargs;
+        kwargs["stream"] = default_cuda_dlpack_stream_arg();
+        return source.attr("__dlpack__")(**kwargs);
+    }
     return source.attr("__dlpack__")();
 }
 
@@ -195,18 +279,13 @@ inline void mark_dlpack_capsule_consumed(py::object               capsule,
     }
 }
 
-inline bool is_pyrxmesh_dense_dlpack(const dlpack::DLManagedTensor* managed)
-{
-    return managed && managed->manager_ctx &&
-           managed->deleter == dense_dlpack_managed_tensor_deleter;
-}
-
 template <typename T>
 inline void copy_dlpack_to_dense_matrix_typed(PyDenseMatrix&          output,
                                               const dlpack::DLTensor& tensor,
                                               rxmesh::locationT       location,
                                               int64_t                 stride0,
-                                              int64_t                 stride1)
+                                              int64_t                 stride1,
+                                              cudaStream_t            copy_stream)
 {
     using namespace rxmesh;
     using MatPtr = std::shared_ptr<rxmesh::DenseMatrix<T, Eigen::ColMajor>>;
@@ -236,7 +315,10 @@ inline void copy_dlpack_to_dense_matrix_typed(PyDenseMatrix&          output,
         constexpr int threads = 256;
         const int64_t n       = tensor.shape[0] * tensor.shape[1];
         copy_dlpack_to_dense_col_major_kernel<T>
-            <<<static_cast<int>((n + threads - 1) / threads), threads>>>(
+            <<<static_cast<int>((n + threads - 1) / threads),
+               threads,
+               0,
+               copy_stream>>>(
                 mat.data(rxmesh::DEVICE),
                 src,
                 tensor.shape[0],
@@ -244,7 +326,7 @@ inline void copy_dlpack_to_dense_matrix_typed(PyDenseMatrix&          output,
                 stride0,
                 stride1);
         CUDA_ERROR(cudaGetLastError());
-        CUDA_ERROR(cudaStreamSynchronize(nullptr));
+        CUDA_ERROR(cudaStreamSynchronize(copy_stream));
     }
 }
 
@@ -295,25 +377,17 @@ inline std::shared_ptr<PyDenseMatrix> dense_matrix_from_dlpack_copy(
                                             static_cast<int>(tensor.shape[1]),
                                             static_cast<int>(location),
                                             "col_major");
-
-        if (is_pyrxmesh_dense_dlpack(managed)) {
-            auto* context = static_cast<DlpackContext*>(managed->manager_ctx);
-            output->copy_from(*context->owner,
-                              static_cast<int>(location),
-                              static_cast<int>(location));
-            mark_dlpack_capsule_consumed(capsule, managed);
-            return output;
-        }
+        const cudaStream_t copy_stream = nullptr;
 
         if (dtype == "float32") {
             copy_dlpack_to_dense_matrix_typed<float>(
-                *output, tensor, location, stride0, stride1);
+                *output, tensor, location, stride0, stride1, copy_stream);
         } else if (dtype == "float64") {
             copy_dlpack_to_dense_matrix_typed<double>(
-                *output, tensor, location, stride0, stride1);
+                *output, tensor, location, stride0, stride1, copy_stream);
         } else if (dtype == "int32") {
             copy_dlpack_to_dense_matrix_typed<int32_t>(
-                *output, tensor, location, stride0, stride1);
+                *output, tensor, location, stride0, stride1, copy_stream);
         }
         mark_dlpack_capsule_consumed(capsule, managed);
         return output;

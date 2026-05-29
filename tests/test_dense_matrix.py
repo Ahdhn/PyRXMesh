@@ -143,6 +143,46 @@ def test_dense_matrix_from_dlpack_copy_cuda_keeps_rxmesh_ownership() -> None:
     np.testing.assert_allclose(copied.to_numpy_copy(source=rx.Location.HOST), values)
 
 
+def test_dense_matrix_from_torch_copy_cuda_respects_producer_stream() -> None:
+    stream = torch.cuda.Stream()
+    with torch.cuda.stream(stream):
+        values = torch.empty((4, 3), dtype=torch.float32, device="cuda")
+        values.copy_(torch.arange(12, dtype=torch.float32, device="cuda").reshape(4, 3))
+
+    copied = rx.DenseMatrix.from_torch_copy(values)
+    copied.move(rx.Location.DEVICE, rx.Location.HOST)
+    np.testing.assert_allclose(
+        copied.to_numpy_copy(source=rx.Location.HOST),
+        np.arange(12, dtype=np.float32).reshape(4, 3),
+    )
+
+
+def test_dense_matrix_from_dlpack_copy_cuda_passes_stream_to_producer() -> None:
+    class Probe:
+        def __init__(self, tensor):
+            self.tensor = tensor
+            self.streams = []
+
+        def __dlpack_device__(self):
+            return self.tensor.__dlpack_device__()
+
+        def __dlpack__(self, stream=None):
+            self.streams.append(stream)
+            return self.tensor.__dlpack__(stream=stream)
+
+    values = torch.arange(12, dtype=torch.float32, device="cuda").reshape(4, 3)
+    probe = Probe(values)
+    copied = rx.DenseMatrix.from_dlpack_copy(probe)
+
+    assert probe.streams
+    assert probe.streams[0] is not None
+    copied.move(rx.Location.DEVICE, rx.Location.HOST)
+    np.testing.assert_allclose(
+        copied.to_numpy_copy(source=rx.Location.HOST),
+        np.arange(12, dtype=np.float32).reshape(4, 3),
+    )
+
+
 def test_dense_matrix_mesh_constructor_supports_handle_access() -> None:
     mesh = load_mesh()
     matrix = rx.DenseMatrix(
