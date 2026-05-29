@@ -223,12 +223,18 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             matrix);
     }
 
-    py::array to_numpy(int source, bool copy)
+    py::array to_numpy(int location)
     {
-        const auto src = parse_location(source);
-        if ((src & rxmesh::HOST) != rxmesh::HOST) {
+        const auto loc = parse_location(location);
+        if (loc != rxmesh::HOST) {
             throw std::invalid_argument(
                 "DenseMatrix.to_numpy() only supports Location.HOST.");
+        }
+        if (!is_host_allocated()) {
+            throw std::runtime_error(
+                "DenseMatrix.to_numpy() requires an existing HOST allocation. "
+                "Move or create the matrix on HOST, or use "
+                "DenseMatrix.to_numpy_copy().");
         }
 
         return std::visit(
@@ -237,17 +243,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                 using T     = typename MatT::element_type::Type;
                 const int r = mat->rows();
                 const int c = mat->cols();
-                if (copy) {
-                    py::array_t<T> out({r, c});
-                    auto           view = out.template mutable_unchecked<2>();
-                    for (int j = 0; j < c; ++j) {
-                        for (int i = 0; i < r; ++i) {
-                            view(i, j) = (*mat)(i, j);
-                        }
-                    }
-                    return out;
-                }
-
                 auto owner = shared_from_this();
                 return py::array_t<T>({r, c},
                                       {static_cast<py::ssize_t>(sizeof(T)),
@@ -258,10 +253,36 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             matrix);
     }
 
-    void from_numpy(py::array values, int target)
+    py::array to_numpy_copy(int source)
+    {
+        const auto src = parse_location(source);
+        if (src != rxmesh::HOST) {
+            throw std::invalid_argument(
+                "DenseMatrix.to_numpy_copy() only supports Location.HOST.");
+        }
+        
+        return std::visit(
+            [&](const auto& mat) -> py::array {
+                using MatT  = std::decay_t<decltype(mat)>;
+                using T     = typename MatT::element_type::Type;
+                const int r = mat->rows();
+                const int c = mat->cols();
+                py::array_t<T> out({r, c});
+                auto           view = out.template mutable_unchecked<2>();
+                for (int j = 0; j < c; ++j) {
+                    for (int i = 0; i < r; ++i) {
+                        view(i, j) = (*mat)(i, j);
+                    }
+                }
+                return out;
+            },
+            matrix);
+    }
+
+    void from_numpy_copy(py::array values, int target)
     {
         const auto dst = parse_location(target);
-
+        
         std::visit(
             [&](const auto& mat) {
                 using MatT = std::decay_t<decltype(mat)>;
@@ -272,7 +293,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                 if (info.ndim != 2 || info.shape[0] != mat->rows() ||
                     info.shape[1] != mat->cols()) {
                     throw std::invalid_argument(
-                        "DenseMatrix.from_numpy() shape must match "
+                        "DenseMatrix.from_numpy_copy() shape must match "
                         "matrix.shape.");
                 }
                 auto view = typed.template unchecked<2>();
@@ -366,8 +387,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
     }
 
     py::object abs_min()
-    {
-        move(rxmesh::DEVICE, rxmesh::HOST);
+    {        
         return std::visit(
             [&](const auto& mat) -> py::object {
                 using MatT = std::decay_t<decltype(mat)>;
@@ -553,6 +573,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
     }
 
    private:
+    
     int validate_row(int row) const
     {
         if (row < 0 || row >= rows()) {

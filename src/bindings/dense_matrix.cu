@@ -87,10 +87,12 @@ void register_dense_matrix(py::module_& m)
              py::arg("value"))
         .def("to_numpy",
              &PyDenseMatrix::to_numpy,
-             py::arg("source") = static_cast<int>(rxmesh::HOST),
-             py::arg("copy")   = true)
-        .def("from_numpy",
-             &PyDenseMatrix::from_numpy,
+             py::arg("location") = static_cast<int>(rxmesh::HOST))
+        .def("to_numpy_copy",
+             &PyDenseMatrix::to_numpy_copy,
+             py::arg("source") = static_cast<int>(rxmesh::HOST))
+        .def("from_numpy_copy",
+             &PyDenseMatrix::from_numpy_copy,
              py::arg("values"),
              py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL))
         .def("copy_from",
