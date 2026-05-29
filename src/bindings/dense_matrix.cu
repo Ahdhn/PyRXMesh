@@ -15,12 +15,31 @@ std::shared_ptr<PyDenseMatrix> make_dense_matrix(int         rows,
         dtype, rows, cols, location, std::move(order));
 }
 
+std::shared_ptr<PyDenseMatrix> make_dense_matrix_for_mesh(
+    std::shared_ptr<rxmesh::RXMeshStatic> mesh,
+    int                                   rows,
+    int                                   cols,
+    std::string                           dtype,
+    int                                   location,
+    std::string                           order)
+{
+    return std::make_shared<PyDenseMatrix>(
+        std::move(mesh), dtype, rows, cols, location, std::move(order));
+}
+
 }  // namespace
 
 void register_dense_matrix(py::module_& m)
 {
     py::class_<PyDenseMatrix, std::shared_ptr<PyDenseMatrix>>(m, "DenseMatrix")
         .def(py::init(&make_dense_matrix),
+             py::arg("rows"),
+             py::arg("cols"),
+             py::arg("dtype")    = "float32",
+             py::arg("location") = static_cast<int>(rxmesh::LOCATION_ALL),
+             py::arg("order")    = "col_major")
+        .def(py::init(&make_dense_matrix_for_mesh),
+             py::arg("mesh"),
              py::arg("rows"),
              py::arg("cols"),
              py::arg("dtype")    = "float32",
@@ -57,6 +76,15 @@ void register_dense_matrix(py::module_& m)
              &PyDenseMatrix::fill_random,
              py::arg("low")  = -1.0,
              py::arg("high") = 1.0)
+        .def("value",
+             &PyDenseMatrix::value,
+             py::arg("row_or_handle"),
+             py::arg("col") = 0)
+        .def("set_value",
+             &PyDenseMatrix::set_value,
+             py::arg("row_or_handle"),
+             py::arg("col"),
+             py::arg("value"))
         .def("to_numpy",
              &PyDenseMatrix::to_numpy,
              py::arg("source") = static_cast<int>(rxmesh::HOST),
