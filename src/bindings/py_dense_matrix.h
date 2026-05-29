@@ -291,12 +291,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
     void copy_from(PyDenseMatrix& other, int source, int target)
     {
-        if (dtype() != other.dtype() || rows() != other.rows() ||
-            cols() != other.cols()) {
-            throw std::invalid_argument(
-                "DenseMatrix.copy_from() requires matching dtype and shape.");
-        }
-
         const auto src = parse_location(source);
         const auto dst = parse_location(target);
 
@@ -431,7 +425,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
     void axpy(PyDenseMatrix& x, py::object alpha)
     {
-        if (dtype() != x.dtype() || rows() != x.rows() || cols() != x.cols()) {
+        if (dtype() != x.dtype()) {
             throw std::invalid_argument(
                 "DenseMatrix.axpy() requires matching dtype and shape.");
         }
@@ -476,8 +470,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
     void swap(PyDenseMatrix& other)
     {
-        if (dtype() != other.dtype() || rows() != other.rows() ||
-            cols() != other.cols()) {
+        if (dtype() != other.dtype()) {
             throw std::invalid_argument(
                 "DenseMatrix.swap() requires matching dtype and shape.");
         }
