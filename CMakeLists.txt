@@ -80,7 +80,7 @@ pybind11_add_module(_rxmesh MODULE
     src/bindings.cu
     src/bindings/py_attributes.cu
     src/bindings/core.cu
-    src/bindings/dense_matrix.cu
+    src/bindings/py_dense_matrix.cu
     src/bindings/geometry.cu
     src/bindings/handles.cu
     src/bindings/mesh.cu
