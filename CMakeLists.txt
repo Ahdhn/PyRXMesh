@@ -78,15 +78,29 @@ set_target_properties(RXMesh PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 pybind11_add_module(_rxmesh MODULE
     src/bindings.cu
-    src/bindings/py_attributes.cu
     src/bindings/core.cu
-    src/bindings/py_dense_matrix.cu
     src/bindings/geometry.cu
     src/bindings/handles.cu
     src/bindings/mesh.cu
-    src/bindings/py_solvers.cu
+    src/bindings/common.h
+    src/bindings/dlpack_minimal.h
+
+    src/bindings/py_attributes.cu
+    src/bindings/py_attribute.h
+
+    src/bindings/py_dense_matrix.cu
+    src/bindings/py_dense_matrix.h
+    src/bindings/dense_matrix_dlpack.h
+
     src/bindings/py_sparse_matrix.cu
+    src/bindings/py_sparse_matrix.h
+    src/bindings/py_solvers.cu
+    src/bindings/py_solvers.h
+    src/bindings/py_sparse_diff.h
+    src/bindings/sparse_matrix_csr.h
+    src/bindings/sparse_matrix_dlpack.h
 )
+
 target_link_libraries(_rxmesh PRIVATE RXMesh)
 target_include_directories(_rxmesh
     PRIVATE
