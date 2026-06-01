@@ -21,7 +21,6 @@ authors = [
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",    
-    "License :: OSI Approved :: BSD License",
     "Programming Language :: C++",
     "Programming Language :: Python :: 3"
 ]
@@ -39,7 +38,6 @@ cmake.version = ">=3.24,<4"
 cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["pyrxmesh"]
-wheel.license-files = ["LICENSE"]
 build.targets = ["_rxmesh"]
 install.components = ["python"]
 
