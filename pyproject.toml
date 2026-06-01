@@ -14,7 +14,7 @@ requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.26",
 ]
-license = { text = "BSD-2-Clause" }
+license = "BSD-2-Clause"
 license-files = ["LICENSE"]
 authors = [
     { name = "Ahmed Mahmoud" },
