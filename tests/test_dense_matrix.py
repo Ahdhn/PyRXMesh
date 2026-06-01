@@ -43,33 +43,87 @@ def test_dense_matrix_numpy_view_requires_host_allocation() -> None:
 
 
 def test_dense_matrix_device_ops_against_numpy() -> None:
+    stream = 2
     matrix = rx.DenseMatrix(4, 3, dtype="float32", location=rx.Location.ALL)
     other = rx.DenseMatrix(4, 3, dtype="float32", location=rx.Location.ALL)
     values = np.arange(12, dtype=np.float32).reshape(4, 3)
     other_values = np.full((4, 3), 2.0, dtype=np.float32)
 
-    matrix.from_numpy_copy(values, target=rx.Location.ALL)
-    other.from_numpy_copy(other_values, target=rx.Location.ALL)
+    matrix.from_numpy_copy(values, target=rx.Location.ALL, stream=stream)
+    other.from_numpy_copy(other_values, target=rx.Location.ALL, stream=stream)
+    rx.cuda_stream_synchronize(stream)
 
-    np.testing.assert_allclose(matrix.norm2(), np.linalg.norm(values), rtol=1e-5)
-    np.testing.assert_allclose(matrix.abs_sum(), np.sum(np.abs(values)), rtol=1e-5)
-    np.testing.assert_allclose(matrix.abs_max(), np.max(np.abs(values)), rtol=1e-5)
-    np.testing.assert_allclose(matrix.abs_min(), np.min(np.abs(values)), rtol=1e-5)
-    np.testing.assert_allclose(matrix.dot(other), np.sum(values * other_values), rtol=1e-5)
+    np.testing.assert_allclose(
+        matrix.norm2(stream=stream), np.linalg.norm(values), rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        matrix.abs_sum(stream=stream), np.sum(np.abs(values)), rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        matrix.abs_max(stream=stream), np.max(np.abs(values)), rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        matrix.abs_min(stream=stream), np.min(np.abs(values)), rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        matrix.dot(other, stream=stream), np.sum(values * other_values), rtol=1e-5
+    )
 
-    matrix.multiply(2.0)
-    matrix.move(rx.Location.DEVICE, rx.Location.HOST)
+    matrix.multiply(2.0, stream=stream)
+    matrix.move(rx.Location.DEVICE, rx.Location.HOST, stream=stream)
+    rx.cuda_stream_synchronize(stream)
     np.testing.assert_allclose(
         matrix.to_numpy_copy(source=rx.Location.HOST), values * 2.0, rtol=1e-5
     )
 
-    matrix.axpy(other, 3.0)
-    matrix.move(rx.Location.DEVICE, rx.Location.HOST)
+    matrix.axpy(other, 3.0, stream=stream)
+    matrix.move(rx.Location.DEVICE, rx.Location.HOST, stream=stream)
+    rx.cuda_stream_synchronize(stream)
     np.testing.assert_allclose(
         matrix.to_numpy_copy(source=rx.Location.HOST),
         values * 2.0 + other_values * 3.0,
         rtol=1e-5,
     )
+
+    copied = rx.DenseMatrix(4, 3, dtype="float32", location=rx.Location.ALL)
+    copied.copy_from(
+        matrix,
+        source=rx.Location.DEVICE,
+        target=rx.Location.DEVICE,
+        stream=stream,
+    )
+    copied.move(rx.Location.DEVICE, rx.Location.HOST, stream=stream)
+    rx.cuda_stream_synchronize(stream)
+    np.testing.assert_allclose(
+        copied.to_numpy_copy(source=rx.Location.HOST),
+        values * 2.0 + other_values * 3.0,
+        rtol=1e-5,
+    )
+
+    matrix.swap(other, stream=stream)
+    matrix.move(rx.Location.DEVICE, rx.Location.HOST, stream=stream)
+    other.move(rx.Location.DEVICE, rx.Location.HOST, stream=stream)
+    rx.cuda_stream_synchronize(stream)
+    np.testing.assert_allclose(
+        matrix.to_numpy_copy(source=rx.Location.HOST), other_values, rtol=1e-5
+    )
+    np.testing.assert_allclose(
+        other.to_numpy_copy(source=rx.Location.HOST),
+        values * 2.0 + other_values * 3.0,
+        rtol=1e-5,
+    )
+
+    matrix.reset(4.0, location=rx.Location.ALL, stream=stream)
+    matrix.move(rx.Location.DEVICE, rx.Location.HOST, stream=stream)
+    rx.cuda_stream_synchronize(stream)
+    np.testing.assert_allclose(
+        matrix.to_numpy_copy(source=rx.Location.HOST),
+        np.full((4, 3), 4.0, dtype=np.float32),
+        rtol=1e-5,
+    )
+
+    with pytest.raises(ValueError, match="stream value 0"):
+        matrix.multiply(1.0, stream=0)
 
 
 def test_dense_matrix_torch_dlpack_cpu_zero_copy() -> None:
@@ -126,6 +180,7 @@ def test_dense_matrix_torch_dlpack_cuda_zero_copy() -> None:
     torch.cuda.synchronize()
 
     matrix.move(rx.Location.DEVICE, rx.Location.HOST)
+    rx.cuda_stream_synchronize()
     assert matrix.to_numpy_copy(source=rx.Location.HOST)[3, 1] == 123.0
 
 
@@ -137,6 +192,7 @@ def test_dense_matrix_from_dlpack_copy_cuda_keeps_rxmesh_ownership() -> None:
     copied = rx.DenseMatrix.from_dlpack_copy(source.to_dlpack(rx.Location.DEVICE))
     assert copied.is_device_allocated
     copied.move(rx.Location.DEVICE, rx.Location.HOST)
+    rx.cuda_stream_synchronize()
     np.testing.assert_allclose(copied.to_numpy_copy(source=rx.Location.HOST), values)
 
     source.reset(-1.0, location=rx.Location.ALL)
@@ -151,6 +207,7 @@ def test_dense_matrix_from_torch_copy_cuda_respects_producer_stream() -> None:
 
     copied = rx.DenseMatrix.from_torch_copy(values)
     copied.move(rx.Location.DEVICE, rx.Location.HOST)
+    rx.cuda_stream_synchronize()
     np.testing.assert_allclose(
         copied.to_numpy_copy(source=rx.Location.HOST),
         np.arange(12, dtype=np.float32).reshape(4, 3),
@@ -177,6 +234,7 @@ def test_dense_matrix_from_dlpack_copy_cuda_passes_stream_to_producer() -> None:
     assert probe.streams
     assert probe.streams[0] is not None
     copied.move(rx.Location.DEVICE, rx.Location.HOST)
+    rx.cuda_stream_synchronize()
     np.testing.assert_allclose(
         copied.to_numpy_copy(source=rx.Location.HOST),
         np.arange(12, dtype=np.float32).reshape(4, 3),

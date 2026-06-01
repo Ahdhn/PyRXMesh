@@ -162,15 +162,12 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
         return std::visit([](const auto& mat) { return mat->bytes(); }, matrix);
     }
 
-    void move(int source, int target)
+    void move(rxmesh::locationT source,
+              rxmesh::locationT target,
+              cudaStream_t      stream = nullptr)
     {
-        move(parse_location(source), parse_location(target));
-    }
-
-    void move(rxmesh::locationT source, rxmesh::locationT target)
-    {
-        std::visit([&](const auto& mat) { mat->move(source, target); }, matrix);
-        synchronize_device_transfer(source, target);
+        std::visit([&](const auto& mat) { mat->move(source, target, stream); },
+                   matrix);
         allocated = static_cast<rxmesh::locationT>(static_cast<int>(allocated) |
                                                    static_cast<int>(target));
     }
@@ -183,14 +180,14 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                                                    (~static_cast<int>(loc)));
     }
 
-    void reset(py::object value, int location)
+    void reset(py::object value, int location, cudaStream_t stream = nullptr)
     {
         const auto loc = parse_location(location);
         std::visit(
             [&](const auto& mat) {
                 using MatT = std::decay_t<decltype(mat)>;
                 using T    = typename MatT::element_type::Type;
-                mat->reset(value.cast<T>(), loc);
+                mat->reset(value.cast<T>(), loc, stream);
             },
             matrix);
     }
@@ -239,11 +236,11 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
         return std::visit(
             [&](const auto& mat) -> py::array {
-                using MatT  = std::decay_t<decltype(mat)>;
-                using T     = typename MatT::element_type::Type;
-                const int r = mat->rows();
-                const int c = mat->cols();
-                auto owner = shared_from_this();
+                using MatT      = std::decay_t<decltype(mat)>;
+                using T         = typename MatT::element_type::Type;
+                const int r     = mat->rows();
+                const int c     = mat->cols();
+                auto      owner = shared_from_this();
                 return py::array_t<T>({r, c},
                                       {static_cast<py::ssize_t>(sizeof(T)),
                                        static_cast<py::ssize_t>(sizeof(T) * r)},
@@ -260,13 +257,13 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             throw std::invalid_argument(
                 "DenseMatrix.to_numpy_copy() only supports Location.HOST.");
         }
-        
+
         return std::visit(
             [&](const auto& mat) -> py::array {
-                using MatT  = std::decay_t<decltype(mat)>;
-                using T     = typename MatT::element_type::Type;
-                const int r = mat->rows();
-                const int c = mat->cols();
+                using MatT       = std::decay_t<decltype(mat)>;
+                using T          = typename MatT::element_type::Type;
+                const int      r = mat->rows();
+                const int      c = mat->cols();
                 py::array_t<T> out({r, c});
                 auto           view = out.template mutable_unchecked<2>();
                 for (int j = 0; j < c; ++j) {
@@ -279,10 +276,12 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             matrix);
     }
 
-    void from_numpy_copy(py::array values, int target)
+    void from_numpy_copy(py::array    values,
+                         int          target,
+                         cudaStream_t stream = nullptr)
     {
         const auto dst = parse_location(target);
-        
+
         std::visit(
             [&](const auto& mat) {
                 using MatT = std::decay_t<decltype(mat)>;
@@ -306,11 +305,14 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             matrix);
 
         if ((dst & rxmesh::DEVICE) == rxmesh::DEVICE) {
-            move(rxmesh::HOST, rxmesh::DEVICE);
+            move(rxmesh::HOST, rxmesh::DEVICE, stream);
         }
     }
 
-    void copy_from(PyDenseMatrix& other, int source, int target)
+    void copy_from(PyDenseMatrix& other,
+                   int            source,
+                   int            target,
+                   cudaStream_t   stream = nullptr)
     {
         const auto src = parse_location(source);
         const auto dst = parse_location(target);
@@ -322,8 +324,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                     [&](auto& src_mat) {
                         using SrcMatT = std::decay_t<decltype(src_mat)>;
                         if constexpr (std::is_same_v<DstMatT, SrcMatT>) {
-                            dst_mat->copy_from(*src_mat, src, dst);
-                            synchronize_device_transfer(src, dst);
+                            dst_mat->copy_from(*src_mat, src, dst, stream);
                             allocated = static_cast<rxmesh::locationT>(
                                 static_cast<int>(allocated) |
                                 static_cast<int>(dst));
@@ -338,7 +339,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             matrix);
     }
 
-    py::object norm2()
+    py::object norm2(cudaStream_t stream = nullptr)
     {
         return std::visit(
             [&](const auto& mat) -> py::object {
@@ -348,13 +349,13 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                     throw std::invalid_argument(
                         "DenseMatrix.norm2() supports float32 and float64.");
                 } else {
-                    return py::cast(mat->norm2());
+                    return py::cast(mat->norm2(stream));
                 }
             },
             matrix);
     }
 
-    py::object abs_sum()
+    py::object abs_sum(cudaStream_t stream = nullptr)
     {
         return std::visit(
             [&](const auto& mat) -> py::object {
@@ -364,13 +365,13 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                     throw std::invalid_argument(
                         "DenseMatrix.abs_sum() supports float32 and float64.");
                 } else {
-                    return py::cast(mat->abs_sum());
+                    return py::cast(mat->abs_sum(stream));
                 }
             },
             matrix);
     }
 
-    py::object abs_max()
+    py::object abs_max(cudaStream_t stream = nullptr)
     {
         return std::visit(
             [&](const auto& mat) -> py::object {
@@ -380,14 +381,14 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                     throw std::invalid_argument(
                         "DenseMatrix.abs_max() supports float32 and float64.");
                 } else {
-                    return py::cast(mat->abs_max());
+                    return py::cast(mat->abs_max(stream));
                 }
             },
             matrix);
     }
 
-    py::object abs_min()
-    {        
+    py::object abs_min(cudaStream_t stream = nullptr)
+    {
         return std::visit(
             [&](const auto& mat) -> py::object {
                 using MatT = std::decay_t<decltype(mat)>;
@@ -396,20 +397,13 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                     throw std::invalid_argument(
                         "DenseMatrix.abs_min() supports float32 and float64.");
                 } else {
-                    T result = std::numeric_limits<T>::max();
-                    for (int j = 0; j < mat->cols(); ++j) {
-                        for (int i = 0; i < mat->rows(); ++i) {
-                            result =
-                                std::min<T>(result, std::abs((*mat)(i, j)));
-                        }
-                    }
-                    return py::cast(result);
+                    return py::cast(mat->abs_min(stream));
                 }
             },
             matrix);
     }
 
-    py::object dot(PyDenseMatrix& other)
+    py::object dot(PyDenseMatrix& other, cudaStream_t stream = nullptr)
     {
         if (dtype() != other.dtype() || rows() != other.rows() ||
             cols() != other.cols()) {
@@ -430,7 +424,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                                     "DenseMatrix.dot() supports float32 and "
                                     "float64.");
                             } else {
-                                return py::cast(lhs->dot(*rhs));
+                                return py::cast(lhs->dot(*rhs, false, stream));
                             }
                         } else {
                             throw std::invalid_argument(
@@ -443,7 +437,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             matrix);
     }
 
-    void axpy(PyDenseMatrix& x, py::object alpha)
+    void axpy(PyDenseMatrix& x, py::object alpha, cudaStream_t stream = nullptr)
     {
         if (dtype() != x.dtype()) {
             throw std::invalid_argument(
@@ -463,7 +457,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                                     "DenseMatrix.axpy() supports float32 and "
                                     "float64.");
                             } else {
-                                y_mat->axpy(*x_mat, alpha.cast<T>());
+                                y_mat->axpy(*x_mat, alpha.cast<T>(), stream);
                             }
                         }
                     },
@@ -472,7 +466,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
             matrix);
     }
 
-    void multiply(py::object scalar)
+    void multiply(py::object scalar, cudaStream_t stream = nullptr)
     {
         std::visit(
             [&](auto& mat) {
@@ -482,13 +476,13 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                     throw std::invalid_argument(
                         "DenseMatrix.multiply() supports float32 and float64.");
                 } else {
-                    mat->multiply(scalar.cast<T>());
+                    mat->multiply(scalar.cast<T>(), stream);
                 }
             },
             matrix);
     }
 
-    void swap(PyDenseMatrix& other)
+    void swap(PyDenseMatrix& other, cudaStream_t stream = nullptr)
     {
         if (dtype() != other.dtype()) {
             throw std::invalid_argument(
@@ -508,7 +502,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                                     "DenseMatrix.swap() supports float32 and "
                                     "float64.");
                             } else {
-                                lhs->swap(*rhs);
+                                lhs->swap(*rhs, stream);
                             }
                         }
                     },
@@ -573,7 +567,6 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
     }
 
    private:
-    
     int validate_row(int row) const
     {
         if (row < 0 || row >= rows()) {
