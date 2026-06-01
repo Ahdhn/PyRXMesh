@@ -223,6 +223,18 @@ inline void destroy_mesh_capsule(PyObject* capsule)
     }
 }
 
+inline void destroy_attribute_capsule(PyObject* capsule)
+{
+    auto* data = static_cast<pyrxmesh::AttributeCapsule*>(
+        PyCapsule_GetPointer(capsule, pyrxmesh::attribute_capsule_name));
+    if (data) {
+        delete data;
+    } else {
+        PyErr_Clear();
+    }
+}
+
+
 template <rxmesh::Op op>
 struct DummyQueryLambda
 {
