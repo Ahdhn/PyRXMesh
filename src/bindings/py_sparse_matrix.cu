@@ -44,7 +44,8 @@ void register_sparse_matrix(py::module_& m)
                     py::arg("col_idx"),
                     py::arg("values"),
                     py::arg("shape"),
-                    py::arg("dtype") = "",
+                    py::arg("dtype")  = "",
+                    py::arg("stream") = py::none(),
                     "Copy CSR DLPack tensors into a new RXMesh-owned "
                     "SparseMatrix.")
         .def_property_readonly("rows", &PySparseMatrix::rows)
@@ -58,24 +59,32 @@ void register_sparse_matrix(py::module_& m)
         .def_property_readonly(
             "op", [](const PySparseMatrix& self) { return self.op; })
         .def_property_readonly("location", &PySparseMatrix::location)
-        .def_property_readonly("bytes", &PySparseMatrix::bytes)
         .def_property_readonly("is_host_allocated",
                                &PySparseMatrix::is_host_allocated)
         .def_property_readonly("is_device_allocated",
                                &PySparseMatrix::is_device_allocated)
-        .def(
-            "move", &PySparseMatrix::move, py::arg("source"), py::arg("target"))
-        .def("sync_host_to_device", &PySparseMatrix::sync_host_to_device)
-        .def("sync_device_to_host", &PySparseMatrix::sync_device_to_host)
+        .def("move",
+             &PySparseMatrix::move,
+             py::arg("source"),
+             py::arg("target"),
+             py::arg("stream") = py::none())
+        .def("sync_host_to_device",
+             &PySparseMatrix::sync_host_to_device,
+             py::arg("stream") = py::none())
+        .def("sync_device_to_host",
+             &PySparseMatrix::sync_device_to_host,
+             py::arg("stream") = py::none())
         .def("reset",
              &PySparseMatrix::reset,
              py::arg("value"),
-             py::arg("location") = static_cast<int>(rxmesh::LOCATION_ALL))
+             py::arg("location") = static_cast<int>(rxmesh::LOCATION_ALL),
+             py::arg("stream")   = py::none())
         .def("copy_from",
              &PySparseMatrix::copy_from,
              py::arg("other"),
              py::arg("source") = static_cast<int>(rxmesh::LOCATION_ALL),
-             py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL))
+             py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
+             py::arg("stream") = py::none())
         .def("is_non_zero",
              &PySparseMatrix::is_non_zero,
              py::arg("row"),
@@ -91,34 +100,42 @@ void register_sparse_matrix(py::module_& m)
              py::arg("location") = static_cast<int>(rxmesh::HOST))
         .def("to_numpy_copy",
              &PySparseMatrix::to_numpy_copy,
-             py::arg("source") = static_cast<int>(rxmesh::HOST))
+             py::arg("source") = static_cast<int>(rxmesh::HOST),
+             py::arg("stream") = py::none())
         .def("values_to_numpy",
              &PySparseMatrix::values_to_numpy,
              py::arg("location") = static_cast<int>(rxmesh::HOST))
         .def("values_to_numpy_copy",
              &PySparseMatrix::values_to_numpy_copy,
-             py::arg("source") = static_cast<int>(rxmesh::HOST))
+             py::arg("source") = static_cast<int>(rxmesh::HOST),
+             py::arg("stream") = py::none())
         .def("from_numpy_values_copy",
              &PySparseMatrix::from_numpy_values_copy,
              py::arg("values"),
-             py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL))
+             py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
+             py::arg("stream") = py::none())
         .def("from_dlpack_values_copy",
              &sparse_values_from_dlpack_copy,
              py::arg("values"),
-             py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL))
+             py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
+             py::arg("stream") = py::none())
         .def("multiply",
              &PySparseMatrix::multiply_dense,
              py::arg("rhs"),
              py::arg("transpose_a") = false,
              py::arg("transpose_b") = false,
              py::arg("alpha")       = py::float_(1.0),
-             py::arg("beta")        = py::float_(0.0))
+             py::arg("beta")        = py::float_(0.0),
+             py::arg("stream")      = py::none())
         .def("multiply_vector",
              &PySparseMatrix::multiply_vector,
              py::arg("rhs"),
-             py::arg("alpha") = py::float_(1.0),
-             py::arg("beta")  = py::float_(0.0))
-        .def("transpose", &PySparseMatrix::transpose)
+             py::arg("alpha")  = py::float_(1.0),
+             py::arg("beta")   = py::float_(0.0),
+             py::arg("stream") = py::none())
+        .def("transpose",
+             &PySparseMatrix::transpose,
+             py::arg("stream") = py::none())
         .def("to_mtx", &PySparseMatrix::to_mtx, py::arg("file_name"))
         .def("to_file", &PySparseMatrix::to_file, py::arg("file_name"))
         .def("release", &PySparseMatrix::release)
