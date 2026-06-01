@@ -72,6 +72,14 @@ void register_module_core(py::module_& m)
         "Initialize RXMesh logging and select a CUDA device.");
 
     m.def("show", &show_polyscope, "Open the Polyscope viewer.");
+    m.def("cuda_stream_synchronize",
+          [](py::object stream) {
+              cuda_stream_synchronize_arg(std::move(stream));
+          },
+          py::arg("stream") = py::none(),
+          "Synchronize a CUDA stream. None/1 is the legacy default stream, "
+          "2 is the per-thread default stream, and values >2 are raw stream "
+          "pointers.");
 }
 
 }  // namespace pyrxmesh_py

@@ -181,6 +181,56 @@ inline rxmesh::locationT parse_location(int location)
     return static_cast<rxmesh::locationT>(location);
 }
 
+inline int64_t cuda_stream_arg_value(py::object stream)
+{
+    if (stream.is_none()) {
+        return 1;
+    }
+    if (!py::isinstance<py::int_>(stream)) {
+        throw py::type_error("CUDA stream must be an integer or None.");
+    }
+    return stream.cast<int64_t>();
+}
+
+inline cudaStream_t parse_cuda_stream_arg(py::object stream)
+{
+    const int64_t value = cuda_stream_arg_value(std::move(stream));
+    if (value == 0) {
+        throw std::invalid_argument(
+            "CUDA stream value 0 is ambiguous and not supported.");
+    }
+    if (value == 1) {
+        return nullptr;
+    }
+    if (value == 2) {
+        return cudaStreamPerThread;
+    }
+    if (value > 2) {
+        return reinterpret_cast<cudaStream_t>(static_cast<uintptr_t>(value));
+    }
+    throw std::invalid_argument("CUDA stream value must be None, 1, 2, or a "
+                                "positive raw stream pointer.");
+}
+
+inline void cuda_stream_synchronize_arg(py::object stream)
+{
+    using namespace rxmesh;
+    CUDA_ERROR(cudaStreamSynchronize(parse_cuda_stream_arg(std::move(stream))));
+}
+
+inline void make_stream_wait_for_legacy_default(cudaStream_t stream)
+{
+    using namespace rxmesh;
+    if (stream == nullptr) {
+        return;
+    }
+    cudaEvent_t event = nullptr;
+    CUDA_ERROR(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));
+    CUDA_ERROR(cudaEventRecord(event, nullptr));
+    CUDA_ERROR(cudaStreamWaitEvent(stream, event, 0));
+    CUDA_ERROR(cudaEventDestroy(event));
+}
+
 inline void synchronize_device_transfer(rxmesh::locationT source,
                                         rxmesh::locationT target)
 {
