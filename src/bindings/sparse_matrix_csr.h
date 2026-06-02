@@ -107,7 +107,7 @@ inline std::shared_ptr<PySparseMatrix> sparse_matrix_from_csr_typed(
                           static_cast<size_t>(nnz) * sizeof(T),
                           cudaMemcpyHostToDevice));
 
-    auto                matrix = std::make_shared<rxmesh::SparseMatrix<T>>(rows,
+    auto matrix = std::make_shared<rxmesh::SparseMatrix<T>>(rows,
                                                             cols,
                                                             nnz,
                                                             buffers->d_row_ptr,
@@ -116,12 +116,10 @@ inline std::shared_ptr<PySparseMatrix> sparse_matrix_from_csr_typed(
                                                             buffers->h_row_ptr,
                                                             buffers->h_col_idx,
                                                             buffers->h_val);
-    SparseMatrixVariant wrapped = matrix;
-    OwnedCsrVariant     owned   = buffers;
-    return std::make_shared<PySparseMatrix>(std::move(wrapped),
-                                            std::move(owned),
-                                            rxmesh::Op::INVALID,
-                                            rxmesh::LOCATION_ALL);
+    return std::make_shared<PySparseMatrixT<T>>(std::move(matrix),
+                                                std::move(buffers),
+                                                rxmesh::Op::INVALID,
+                                                rxmesh::LOCATION_ALL);
 }
 
 inline std::shared_ptr<PySparseMatrix> sparse_matrix_from_numpy_copy(

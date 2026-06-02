@@ -12,7 +12,20 @@ std::shared_ptr<PySparseMatrix> make_sparse_matrix(
     rxmesh::Op                            op,
     std::string                           dtype)
 {
-    return std::make_shared<PySparseMatrix>(std::move(mesh), op, dtype);
+    switch (parse_dtype(dtype)) {
+        case DType::Float32:
+            return std::make_shared<PySparseMatrixT<float>>(
+                std::move(mesh), op, static_cast<int>(rxmesh::LOCATION_ALL));
+        case DType::Float64:
+            return std::make_shared<PySparseMatrixT<double>>(
+                std::move(mesh), op, static_cast<int>(rxmesh::LOCATION_ALL));
+        case DType::Int32:
+            return std::make_shared<PySparseMatrixT<int32_t>>(
+                std::move(mesh), op, static_cast<int>(rxmesh::LOCATION_ALL));
+        default:
+            throw std::invalid_argument(
+                "SparseMatrix supports float32, float64, and int32 values.");
+    }
 }
 
 py::object make_sparse_matrix_from_mesh(
@@ -20,7 +33,111 @@ py::object make_sparse_matrix_from_mesh(
     rxmesh::Op                            op,
     std::string                           dtype)
 {
-    return py::cast(make_sparse_matrix(std::move(mesh), op, dtype));
+    return py::cast(make_sparse_matrix(std::move(mesh), op, std::move(dtype)));
+}
+
+template <typename T>
+void bind_sparse_matrix_type(py::module_& m, const char* name)
+{
+    py::class_<PySparseMatrixT<T>,
+               PySparseMatrix,
+               std::shared_ptr<PySparseMatrixT<T>>>(m, name);
+}
+
+template <typename T>
+void bind_jacobian_sparse_matrix_type(py::module_& m, const char* name)
+{
+    py::class_<PyJacobianSparseMatrix<T>,
+               PySparseMatrixT<T>,
+               std::shared_ptr<PyJacobianSparseMatrix<T>>>(m, name)
+        .def_property_readonly("num_terms",
+                               &PyJacobianSparseMatrix<T>::num_terms)
+        .def("term_num_rows",
+             &PyJacobianSparseMatrix<T>::term_num_rows,
+             py::arg("term"))
+        .def("term_rows_range",
+             &PyJacobianSparseMatrix<T>::term_rows_range,
+             py::arg("term"));
+}
+
+template <typename T, int K>
+void bind_hessian_sparse_matrix_type(py::module_& m, const char* name)
+{
+    py::class_<PyHessianSparseMatrix<T, K>,
+               PySparseMatrixT<T>,
+               std::shared_ptr<PyHessianSparseMatrix<T, K>>>(m, name)
+        .def_property_readonly("variable_dim",
+                               &PyHessianSparseMatrix<T, K>::variable_dim);
+}
+
+py::object make_jacobian_sparse_matrix(
+    std::shared_ptr<rxmesh::RXMeshStatic> mesh,
+    std::vector<rxmesh::Op>               ops,
+    py::sequence                          block_shapes,
+    std::string                           dtype)
+{
+    switch (parse_dtype(dtype)) {
+        case DType::Float32:
+            return py::cast(std::make_shared<PyJacobianSparseMatrix<float>>(
+                std::move(mesh), std::move(ops), block_shapes));
+        case DType::Float64:
+            return py::cast(std::make_shared<PyJacobianSparseMatrix<double>>(
+                std::move(mesh), std::move(ops), block_shapes));
+        default:
+            throw std::invalid_argument(
+                "JacobianSparseMatrix supports float32 and float64.");
+    }
+}
+
+template <typename T>
+py::object make_hessian_sparse_matrix_typed(
+    std::shared_ptr<rxmesh::RXMeshStatic> mesh,
+    int                                   variable_dim,
+    int                                   extra_nnz_entries,
+    rxmesh::Op                            op)
+{
+    switch (variable_dim) {
+        case 1:
+            return py::cast(std::make_shared<PyHessianSparseMatrix<T, 1>>(
+                std::move(mesh), extra_nnz_entries, op));
+        case 2:
+            return py::cast(std::make_shared<PyHessianSparseMatrix<T, 2>>(
+                std::move(mesh), extra_nnz_entries, op));
+        case 3:
+            return py::cast(std::make_shared<PyHessianSparseMatrix<T, 3>>(
+                std::move(mesh), extra_nnz_entries, op));
+        case 4:
+            return py::cast(std::make_shared<PyHessianSparseMatrix<T, 4>>(
+                std::move(mesh), extra_nnz_entries, op));
+        case 6:
+            return py::cast(std::make_shared<PyHessianSparseMatrix<T, 6>>(
+                std::move(mesh), extra_nnz_entries, op));
+        default:
+            throw std::invalid_argument(
+                "HessianSparseMatrix currently supports variable_dim 1, 2, 3, "
+                "4, or 6.");
+    }
+}
+
+py::object make_hessian_sparse_matrix(
+    std::shared_ptr<rxmesh::RXMeshStatic> mesh,
+    int                                   variable_dim,
+    int                                   extra_nnz_entries,
+    rxmesh::Op                            op,
+    std::string                           dtype)
+{
+    validate_hessian_inputs(mesh, variable_dim, extra_nnz_entries);
+    switch (parse_dtype(dtype)) {
+        case DType::Float32:
+            return make_hessian_sparse_matrix_typed<float>(
+                std::move(mesh), variable_dim, extra_nnz_entries, op);
+        case DType::Float64:
+            return make_hessian_sparse_matrix_typed<double>(
+                std::move(mesh), variable_dim, extra_nnz_entries, op);
+        default:
+            throw std::invalid_argument(
+                "HessianSparseMatrix supports float32 and float64.");
+    }
 }
 
 void register_sparse_matrix(py::module_& m)
@@ -99,17 +216,23 @@ void register_sparse_matrix(py::module_& m)
         .def("to_numpy",
              &PySparseMatrix::to_numpy,
              py::arg("location") = static_cast<int>(rxmesh::HOST))
-        .def("to_numpy_copy",
-             &PySparseMatrix::to_numpy_copy,
-             py::arg("source") = static_cast<int>(rxmesh::HOST),
-             py::arg("stream") = py::none())
+        .def(
+            "to_numpy_copy",
+            [](PySparseMatrix& self, int source, py::object) {
+                return self.to_numpy_copy(source);
+            },
+            py::arg("source") = static_cast<int>(rxmesh::HOST),
+            py::arg("stream") = py::none())
         .def("values_to_numpy",
              &PySparseMatrix::values_to_numpy,
              py::arg("location") = static_cast<int>(rxmesh::HOST))
-        .def("values_to_numpy_copy",
-             &PySparseMatrix::values_to_numpy_copy,
-             py::arg("source") = static_cast<int>(rxmesh::HOST),
-             py::arg("stream") = py::none())
+        .def(
+            "values_to_numpy_copy",
+            [](PySparseMatrix& self, int source, py::object) {
+                return self.values_to_numpy_copy(source);
+            },
+            py::arg("source") = static_cast<int>(rxmesh::HOST),
+            py::arg("stream") = py::none())
         .def("from_numpy_values_copy",
              &PySparseMatrix::from_numpy_values_copy,
              py::arg("values"),
@@ -131,9 +254,6 @@ void register_sparse_matrix(py::module_& m)
         .def("multiply_vector",
              &PySparseMatrix::multiply_vector,
              py::arg("rhs"),
-             py::arg("stream") = py::none())
-        .def("transpose",
-             &PySparseMatrix::transpose,
              py::arg("stream") = py::none())
         .def("to_mtx", &PySparseMatrix::to_mtx, py::arg("file_name"))
         .def("to_file", &PySparseMatrix::to_file, py::arg("file_name"))
@@ -168,8 +288,7 @@ void register_sparse_matrix(py::module_& m)
                                                   std::move(stream));
             },
             py::arg("location") = static_cast<int>(rxmesh::DEVICE),
-            py::arg("stream")   = py::none(),
-            "Return a DLPack capsule for the CSR row pointer array.")
+            py::arg("stream")   = py::none())
         .def(
             "_crow_indices_dlpack",
             [](std::shared_ptr<PySparseMatrix> self,
@@ -181,8 +300,7 @@ void register_sparse_matrix(py::module_& m)
                                                   std::move(stream));
             },
             py::arg("location") = static_cast<int>(rxmesh::DEVICE),
-            py::arg("stream")   = py::none(),
-            "Return a DLPack capsule for the CSR row pointer array.")
+            py::arg("stream")   = py::none())
         .def(
             "_col_indices_dlpack",
             [](std::shared_ptr<PySparseMatrix> self,
@@ -194,8 +312,7 @@ void register_sparse_matrix(py::module_& m)
                                                   std::move(stream));
             },
             py::arg("location") = static_cast<int>(rxmesh::DEVICE),
-            py::arg("stream")   = py::none(),
-            "Return a DLPack capsule for the CSR column index array.")
+            py::arg("stream")   = py::none())
         .def(
             "_col_idx_dlpack",
             [](std::shared_ptr<PySparseMatrix> self,
@@ -207,8 +324,7 @@ void register_sparse_matrix(py::module_& m)
                                                   std::move(stream));
             },
             py::arg("location") = static_cast<int>(rxmesh::DEVICE),
-            py::arg("stream")   = py::none(),
-            "Return a DLPack capsule for the CSR column index array.")
+            py::arg("stream")   = py::none())
         .def(
             "_values_dlpack",
             [](std::shared_ptr<PySparseMatrix> self,
@@ -220,44 +336,48 @@ void register_sparse_matrix(py::module_& m)
                                                   std::move(stream));
             },
             py::arg("location") = static_cast<int>(rxmesh::DEVICE),
-            py::arg("stream")   = py::none(),
-            "Return a DLPack capsule for the CSR value array.");
+            py::arg("stream")   = py::none());
 
-    py::class_<PyJacobianSparseMatrix,
-               PySparseMatrix,
-               std::shared_ptr<PyJacobianSparseMatrix>>(m,
-                                                        "JacobianSparseMatrix")
-        .def(py::init<std::shared_ptr<rxmesh::RXMeshStatic>,
-                      std::vector<rxmesh::Op>,
-                      py::sequence,
-                      std::string>(),
-             py::arg("mesh"),
-             py::arg("ops"),
-             py::arg("block_shapes"),
-             py::arg("dtype") = "float32")
-        .def_property_readonly("num_terms", &PyJacobianSparseMatrix::num_terms)
-        .def("term_num_rows",
-             &PyJacobianSparseMatrix::term_num_rows,
-             py::arg("term"))
-        .def("term_rows_range",
-             &PyJacobianSparseMatrix::term_rows_range,
-             py::arg("term"));
+    bind_sparse_matrix_type<float>(m, "_SparseMatrixFloat32");
+    bind_sparse_matrix_type<double>(m, "_SparseMatrixFloat64");
+    bind_sparse_matrix_type<int32_t>(m, "_SparseMatrixInt32");
 
-    py::class_<PyHessianSparseMatrix,
-               PySparseMatrix,
-               std::shared_ptr<PyHessianSparseMatrix>>(m, "HessianSparseMatrix")
-        .def(py::init<std::shared_ptr<rxmesh::RXMeshStatic>,
-                      int,
-                      int,
-                      rxmesh::Op,
-                      std::string>(),
-             py::arg("mesh"),
-             py::arg("variable_dim")      = 3,
-             py::arg("extra_nnz_entries") = 0,
-             py::arg("op")                = rxmesh::Op::VV,
-             py::arg("dtype")             = "float32")
-        .def_property_readonly("variable_dim",
-                               &PyHessianSparseMatrix::variable_dim); 
+    bind_jacobian_sparse_matrix_type<float>(m, "_JacobianSparseMatrixFloat32");
+    bind_jacobian_sparse_matrix_type<double>(m, "_JacobianSparseMatrixFloat64");
+    m.def("JacobianSparseMatrix",
+          &make_jacobian_sparse_matrix,
+          py::arg("mesh"),
+          py::arg("ops"),
+          py::arg("block_shapes"),
+          py::arg("dtype") = "float32");
+
+    bind_hessian_sparse_matrix_type<float, 1>(
+        m, "_HessianSparseMatrixFloat32Dim1");
+    bind_hessian_sparse_matrix_type<float, 2>(
+        m, "_HessianSparseMatrixFloat32Dim2");
+    bind_hessian_sparse_matrix_type<float, 3>(
+        m, "_HessianSparseMatrixFloat32Dim3");
+    bind_hessian_sparse_matrix_type<float, 4>(
+        m, "_HessianSparseMatrixFloat32Dim4");
+    bind_hessian_sparse_matrix_type<float, 6>(
+        m, "_HessianSparseMatrixFloat32Dim6");
+    bind_hessian_sparse_matrix_type<double, 1>(
+        m, "_HessianSparseMatrixFloat64Dim1");
+    bind_hessian_sparse_matrix_type<double, 2>(
+        m, "_HessianSparseMatrixFloat64Dim2");
+    bind_hessian_sparse_matrix_type<double, 3>(
+        m, "_HessianSparseMatrixFloat64Dim3");
+    bind_hessian_sparse_matrix_type<double, 4>(
+        m, "_HessianSparseMatrixFloat64Dim4");
+    bind_hessian_sparse_matrix_type<double, 6>(
+        m, "_HessianSparseMatrixFloat64Dim6");
+    m.def("HessianSparseMatrix",
+          &make_hessian_sparse_matrix,
+          py::arg("mesh"),
+          py::arg("variable_dim")      = 3,
+          py::arg("extra_nnz_entries") = 0,
+          py::arg("op")                = rxmesh::Op::VV,
+          py::arg("dtype")             = "float32");
 }
 
 }  // namespace pyrxmesh_py

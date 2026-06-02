@@ -47,41 +47,10 @@ struct DlpackContext
     int64_t                        strides[2];
 };
 
-inline int64_t cuda_dlpack_stream_value(py::object stream)
-{
-    if (stream.is_none()) {
-        return 1;
-    }
-    if (!py::isinstance<py::int_>(stream)) {
-        throw py::type_error("DLPack CUDA stream must be an integer or None.");
-    }
-    return stream.cast<int64_t>();
-}
-
 inline bool is_cuda_dlpack_no_sync_stream(py::object stream)
 {
     //https://data-apis.org/array-api/2024.12/API_specification/generated/array_api.array.__dlpack__.html
-    return !stream.is_none() && cuda_dlpack_stream_value(std::move(stream)) == -1;
-}
-
-inline cudaStream_t parse_cuda_dlpack_stream(py::object stream)
-{
-    const int64_t value = cuda_dlpack_stream_value(std::move(stream));
-    if (value == 0) {
-        throw std::invalid_argument(
-            "DLPack CUDA stream value 0 is ambiguous and not supported.");
-    }
-    if (value == 1) {
-        return nullptr;
-    }
-    if (value == 2) {
-        return cudaStreamPerThread;
-    }
-    if (value > 2) {
-        return reinterpret_cast<cudaStream_t>(
-            static_cast<uintptr_t>(value));
-    }
-    throw std::invalid_argument("Unsupported DLPack CUDA stream value.");
+    return !stream.is_none() && cuda_stream_arg_value(std::move(stream)) == -1;
 }
 
 inline py::object default_cuda_dlpack_stream_arg()
@@ -108,7 +77,7 @@ inline void synchronize_dense_dlpack_export_stream(py::object stream)
         return;
     }
 
-    cudaStream_t consumer_stream = parse_cuda_dlpack_stream(std::move(stream));
+    cudaStream_t consumer_stream = parse_cuda_stream_arg(std::move(stream));
     if (consumer_stream == nullptr) {
         CUDA_ERROR(cudaStreamSynchronize(nullptr));
         return;
