@@ -96,7 +96,6 @@ pybind11_add_module(_rxmesh MODULE
     src/bindings/py_sparse_matrix.h
     src/bindings/py_solvers.cu
     src/bindings/py_solvers.h
-    src/bindings/py_candidate_pairs.h
     src/bindings/py_hessian_sparse_matrix.h
     src/bindings/py_jacobian_sparse_matrix.h
     src/bindings/sparse_matrix_csr.h

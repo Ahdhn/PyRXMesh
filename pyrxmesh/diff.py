@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from . import CandidatePairs, HessianSparseMatrix, JacobianSparseMatrix
+from . import HessianSparseMatrix, JacobianSparseMatrix
 
-__all__ = [
-    "CandidatePairs",
+__all__ = [    
     "HessianSparseMatrix",
     "JacobianSparseMatrix",
 ]

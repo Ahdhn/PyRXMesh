@@ -1,4 +1,3 @@
-#include "bindings/py_candidate_pairs.h"
 #include "bindings/py_hessian_sparse_matrix.h"
 #include "bindings/py_jacobian_sparse_matrix.h"
 #include "bindings/sparse_matrix_csr.h"
@@ -258,20 +257,7 @@ void register_sparse_matrix(py::module_& m)
              py::arg("op")                = rxmesh::Op::VV,
              py::arg("dtype")             = "float32")
         .def_property_readonly("variable_dim",
-                               &PyHessianSparseMatrix::variable_dim);
-
-    py::class_<PyCandidatePairs, std::shared_ptr<PyCandidatePairs>>(
-        m, "CandidatePairs")
-        .def(py::init<int>(), py::arg("capacity"))
-        .def_property_readonly("capacity", &PyCandidatePairs::capacity)
-        .def_property_readonly("num_pairs", &PyCandidatePairs::num_pairs)
-        .def("insert",
-             &PyCandidatePairs::insert,
-             py::arg("first"),
-             py::arg("second"))
-        .def("get_pair", &PyCandidatePairs::get_pair, py::arg("index"))
-        .def("to_numpy", &PyCandidatePairs::to_numpy)
-        .def("reset", &PyCandidatePairs::reset);
+                               &PyHessianSparseMatrix::variable_dim); 
 }
 
 }  // namespace pyrxmesh_py
