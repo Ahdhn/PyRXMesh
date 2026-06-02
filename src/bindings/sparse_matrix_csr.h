@@ -14,6 +14,7 @@ inline std::shared_ptr<PySparseMatrix> sparse_matrix_from_csr_typed(
     py::array values,
     py::tuple shape)
 {
+    using namespace rxmesh;
     using IndexT = typename rxmesh::SparseMatrix<T>::IndexT;
 
     if (py::len(shape) != 2) {
