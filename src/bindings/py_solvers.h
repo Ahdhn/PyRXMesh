@@ -55,25 +55,20 @@ struct PyIterativeSolver
         }
         matrix->ensure_device_readable();
 
-        std::visit(
+        with_float_double_sparse_matrix(
+            *matrix,
+            "Iterative solvers",
             [&](auto& sparse_mat) {
                 using SparseMatT = std::decay_t<decltype(sparse_mat)>;
                 using T          = typename SparseMatT::element_type::Type;
-                if constexpr (std::is_same_v<T, int32_t>) {
-                    throw std::invalid_argument(
-                        "Iterative solvers support float32 and float64 "
-                        "SparseMatrix values.");
-                } else {
-                    solver = std::make_shared<SolverT<T, Eigen::ColMajor>>(
-                        *sparse_mat,
-                        unknown_dim,
-                        max_iter,
-                        abs_tol.cast<T>(),
-                        rel_tol.cast<T>(),
-                        reset_residual_freq);
-                }
-            },
-            matrix->matrix);
+                solver = std::make_shared<SolverT<T, Eigen::ColMajor>>(
+                    *sparse_mat,
+                    unknown_dim,
+                    max_iter,
+                    abs_tol.cast<T>(),
+                    rel_tol.cast<T>(),
+                    reset_residual_freq);
+            });
     }
 
     std::string name()
@@ -250,21 +245,16 @@ struct PyDirectSolver
                 "Direct solvers require a square SparseMatrix.");
         }
 
-        std::visit(
+        with_float_double_sparse_matrix(
+            *matrix,
+            "Direct solvers",
             [&](auto& sparse_mat) {
                 using SparseMatT = std::decay_t<decltype(sparse_mat)>;
                 using T          = typename SparseMatT::element_type::Type;
-                if constexpr (std::is_same_v<T, int32_t>) {
-                    throw std::invalid_argument(
-                        "Direct solvers support float32 and float64 "
-                        "SparseMatrix values.");
-                } else {
-                    solver = std::make_shared<
-                        SolverT<rxmesh::SparseMatrix<T>, Eigen::ColMajor>>(
-                        sparse_mat.get(), permute_method);
-                }
-            },
-            matrix->matrix);
+                solver = std::make_shared<
+                    SolverT<rxmesh::SparseMatrix<T>, Eigen::ColMajor>>(
+                    sparse_mat.get(), permute_method);
+            });
     }
 
     std::string name()
@@ -440,21 +430,16 @@ struct PyCuDSSDirectSolver
         matrix->ensure_host_readable();
         matrix->ensure_device_readable();
 
-        std::visit(
+        with_float_double_sparse_matrix(
+            *matrix,
+            "cuDSS direct solvers",
             [&](auto& sparse_mat) {
                 using SparseMatT = std::decay_t<decltype(sparse_mat)>;
                 using T          = typename SparseMatT::element_type::Type;
-                if constexpr (std::is_same_v<T, int32_t>) {
-                    throw std::invalid_argument(
-                        "cuDSS direct solvers support float32 and float64 "
-                        "SparseMatrix values.");
-                } else {
-                    solver = std::make_shared<
-                        SolverT<rxmesh::SparseMatrix<T>, Eigen::ColMajor>>(
-                        sparse_mat.get(), permute_method);
-                }
-            },
-            matrix->matrix);
+                solver = std::make_shared<
+                    SolverT<rxmesh::SparseMatrix<T>, Eigen::ColMajor>>(
+                    sparse_mat.get(), permute_method);
+            });
     }
 
     std::string name()
