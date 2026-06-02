@@ -39,10 +39,12 @@ set(PYRXMESH_USE_SUITESPARSE "OFF" CACHE BOOL "Build RXMesh with SuiteSparse sup
 
 
 string(REPLACE "\\" "/" PYRXMESH_RXMESH_SOURCE_DIR_TAG "${PYRXMESH_RXMESH_SOURCE_DIR}")
+set(PYRXMESH_CUDA_ARCHITECTURES_TAG "${CMAKE_CUDA_ARCHITECTURES}")
+string(REPLACE ";" "," PYRXMESH_CUDA_ARCHITECTURES_TAG "${PYRXMESH_CUDA_ARCHITECTURES_TAG}")
 
 # Captures build options that plugins must match to safely link against this PyRXMesh/RXMesh install. Used by plugins to check compatibility at runtime and refuse to load if incompatible, preventing hard-to-debug crashes due to ABI incompatibility.
 set(PYRXMESH_BUILD_CONFIG_TAG
-    "abi=${PYRXMESH_PLUGIN_ABI_VERSION},pyrxmesh=${PROJECT_VERSION},rxmesh_repo=${PYRXMESH_RXMESH_GIT_REPO},rxmesh_tag=${PYRXMESH_RXMESH_GIT_TAG},rxmesh_source=${PYRXMESH_RXMESH_SOURCE_DIR_TAG},polyscope=${PYRXMESH_USE_POLYSCOPE},double=${PYRXMESH_USE_DOUBLE},cudss=${PYRXMESH_USE_CUDSS},suitesparse=${PYRXMESH_USE_SUITESPARSE},cuda_arch=${CMAKE_CUDA_ARCHITECTURES}"
+    "abi=${PYRXMESH_PLUGIN_ABI_VERSION},pyrxmesh=${PROJECT_VERSION},rxmesh_repo=${PYRXMESH_RXMESH_GIT_REPO},rxmesh_tag=${PYRXMESH_RXMESH_GIT_TAG},rxmesh_source=${PYRXMESH_RXMESH_SOURCE_DIR_TAG},polyscope=${PYRXMESH_USE_POLYSCOPE},double=${PYRXMESH_USE_DOUBLE},cudss=${PYRXMESH_USE_CUDSS},suitesparse=${PYRXMESH_USE_SUITESPARSE},cuda_arch=${PYRXMESH_CUDA_ARCHITECTURES_TAG}"
 )
 
 # RXMesh uses these option names internally. Force them before adding RXMesh so PyRXMesh controls the dependency build in both Git and local-source modes.
