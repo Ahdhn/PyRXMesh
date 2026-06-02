@@ -1,0 +1,193 @@
+name: Build wheels
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      rxmesh_ref:
+        description: "RXMesh tag or commit to build against. Use a pinned ref for publishing."
+        required: true
+        default: "main"
+      publish:
+        description: "Publish target"
+        required: true
+        type: choice
+        default: "none"
+        options:
+          - none
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+env:
+  CUDA_VERSION: "12.6.3"
+  CUDA_ARCHITECTURES: "75;80;86;89;90"
+  RXMESH_REF: ${{ github.event.inputs.rxmesh_ref || vars.PYRXMESH_RXMESH_GIT_TAG || 'main' }}
+
+jobs:
+  wheels:
+    name: Wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            artifact: pyrxmesh-wheels-linux
+          - os: windows-2022
+            artifact: pyrxmesh-wheels-windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install CUDA Toolkit on Windows
+        if: runner.os == 'Windows'
+        uses: Jimver/cuda-toolkit@v0.2.35
+        with:
+          cuda: ${{ env.CUDA_VERSION }}
+          method: network
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21.3
+        env:
+          CIBW_BUILD: "cp310-* cp311-* cp312-*"
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_ARCHS_LINUX: "x86_64"
+          CIBW_ARCHS_WINDOWS: "AMD64"
+          CIBW_BUILD_FRONTEND: "build"
+          CIBW_CONFIG_SETTINGS: >-
+            cmake.define.CMAKE_CUDA_ARCHITECTURES=${{ env.CUDA_ARCHITECTURES }}
+            cmake.define.PYRXMESH_RXMESH_GIT_TAG=${{ env.RXMESH_REF }}
+            cmake.define.PYRXMESH_USE_POLYSCOPE=ON
+            cmake.define.PYRXMESH_BUILD_RXMESH_TESTS=OFF
+            cmake.define.PYRXMESH_BUILD_RXMESH_APPS=OFF
+          CIBW_TEST_COMMAND: >-
+            python -c "import pyrxmesh as rx; print(rx.abi_version()); print(rx.build_config_tag())"
+          CIBW_BEFORE_BUILD: >-
+            python -m pip install "scikit-build-core>=0.12" "pybind11>=2.13" "numpy>=1.26"
+          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
+          CIBW_ENVIRONMENT_LINUX: >-
+            PATH=/usr/local/cuda/bin:$PATH
+            LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+            CUDA_HOME=/usr/local/cuda
+            CUDA_PATH=/usr/local/cuda
+            CUDACXX=/usr/local/cuda/bin/nvcc
+          CIBW_BEFORE_ALL_LINUX: |
+            set -eux
+            dnf install -y dnf-plugins-core wget ca-certificates
+            dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
+            dnf clean expire-cache
+            dnf install -y cuda-toolkit-12-6 libglvnd-devel libX11-devel libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel
+            ln -sfn /usr/local/cuda-12.6 /usr/local/cuda
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
+            auditwheel repair
+            --exclude libcuda.so.1
+            --exclude libcudart.so.12
+            --exclude libcublas.so.12
+            --exclude libcublasLt.so.12
+            --exclude libcusolver.so.11
+            --exclude libcusparse.so.12
+            --exclude libnvJitLink.so.12
+            --exclude libnvrtc.so.12
+            --exclude libGL.so.1
+            --exclude libGLX.so.0
+            --exclude libOpenGL.so.0
+            --exclude libGLdispatch.so.0
+            --exclude libX11.so.6
+            --exclude libXcursor.so.1
+            --exclude libXi.so.6
+            --exclude libXinerama.so.1
+            --exclude libXrandr.so.2
+            -w {dest_dir} {wheel}
+
+      - name: Inspect Linux wheels
+        if: runner.os == 'Linux'
+        run: |
+          python -m pip install auditwheel
+          auditwheel show wheelhouse/*.whl
+
+      - name: Inspect Windows wheels
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m pip install delvewheel
+          Get-ChildItem wheelhouse\*.whl | ForEach-Object { python -m delvewheel show $_.FullName }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  sdist:
+    name: Source distribution
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist
+        run: |
+          python -m pip install build
+          python -m build --sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pyrxmesh-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish package
+    runs-on: ubuntu-22.04
+    needs:
+      - wheels
+      - sdist
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish != 'none')
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Require pinned RXMesh ref for publishing
+        shell: bash
+        run: |
+          if [[ -z "${RXMESH_REF}" || "${RXMESH_REF}" == "main" ]]; then
+            echo "Publishing requires a pinned RXMesh tag or commit. Set workflow input rxmesh_ref or repository variable PYRXMESH_RXMESH_GIT_TAG."
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pyrxmesh-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to TestPyPI
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist
+
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'pypi')
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
