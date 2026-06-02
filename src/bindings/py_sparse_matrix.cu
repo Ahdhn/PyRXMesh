@@ -1,4 +1,6 @@
-#include "bindings/py_sparse_diff.h"
+#include "bindings/py_candidate_pairs.h"
+#include "bindings/py_hessian_sparse_matrix.h"
+#include "bindings/py_jacobian_sparse_matrix.h"
 #include "bindings/sparse_matrix_csr.h"
 #include "bindings/sparse_matrix_dlpack.h"
 
