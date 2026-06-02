@@ -48,8 +48,7 @@ _extension_import_error: ModuleNotFoundError | None = None
 try:
     from ._rxmesh import (
         Attribute,
-        CGSolver,
-        CandidatePairs,
+        CGSolver,        
         CholeskySolver,
         DEdgeHandle,
         DType,
@@ -84,6 +83,7 @@ try:
         abi_version,
         build_config_tag,
         create_plane,
+        cuda_stream_synchronize,
         cuDSSCholeskySolver,
         has_cudss,
         init,
@@ -97,8 +97,7 @@ except ModuleNotFoundError as exc:
 else:
     __all__ = [
         "Attribute",
-        "CGSolver",
-        "CandidatePairs",
+        "CGSolver",        
         "CholeskySolver",
         "DEdgeHandle",
         "DType",
@@ -133,6 +132,7 @@ else:
         "abi_version",
         "build_config_tag",
         "create_plane",
+        "cuda_stream_synchronize",
         "cuDSSCholeskySolver",
         "has_cudss",
         "init",
@@ -170,6 +170,43 @@ else:
                 "Location.DEVICE."
             )
 
+    class _SparseMatrixDlpackView:
+        def __init__(self, matrix, location, component):
+            self._matrix = matrix
+            self._location = location
+            self._component = component
+            self._is_host = location == Location.HOST
+            self._is_device = location == Location.DEVICE
+
+        def __dlpack__(self, stream=None):
+            if self._component == "row_ptr":
+                return self._matrix._row_ptr_dlpack(
+                    self._location,
+                    stream=stream,
+                )
+            if self._component == "col_idx":
+                return self._matrix._col_indices_dlpack(
+                    self._location,
+                    stream=stream,
+                )
+            if self._component == "values":
+                return self._matrix._values_dlpack(
+                    self._location,
+                    stream=stream,
+                )
+            raise ValueError("Unsupported SparseMatrix DLPack component.")
+
+        def __dlpack_device__(self):
+            if self._is_host:
+                return (1, 0)
+            if self._is_device:
+                torch = _require_torch()
+                return (2, torch.cuda.current_device())
+            raise ValueError(
+                "SparseMatrix.to_torch() location must be Location.HOST or "
+                "Location.DEVICE."
+            )
+
     def _dense_matrix_to_torch(self, location=Location.DEVICE):
         torch = _require_torch()
         return torch.utils.dlpack.from_dlpack(
@@ -182,10 +219,15 @@ else:
 
     def _sparse_matrix_to_torch(self, location=Location.DEVICE):
         torch = _require_torch()
-        row_ptr, col_idx, values = self.to_dlpack_csr(location)
-        crow = torch.utils.dlpack.from_dlpack(row_ptr)
-        col = torch.utils.dlpack.from_dlpack(col_idx)
-        val = torch.utils.dlpack.from_dlpack(values)
+        crow = torch.utils.dlpack.from_dlpack(
+            _SparseMatrixDlpackView(self, location, "row_ptr")
+        )
+        col = torch.utils.dlpack.from_dlpack(
+            _SparseMatrixDlpackView(self, location, "col_idx")
+        )
+        val = torch.utils.dlpack.from_dlpack(
+            _SparseMatrixDlpackView(self, location, "values")
+        )
         return torch.sparse_csr_tensor(
             crow,
             col,
@@ -194,11 +236,14 @@ else:
             device=val.device,
         )
 
-    def _sparse_matrix_from_torch_values_copy(self, values, target=Location.ALL):
+    def _sparse_matrix_from_torch_values_copy(
+        self,
+        values,
+        target=Location.ALL,
+        stream=None,
+    ):
         tensor = values.detach() if hasattr(values, "detach") else values
-        if hasattr(tensor, "cpu"):
-            tensor = tensor.cpu()
-        self.from_numpy_values(tensor.numpy(), target=target)
+        self.from_dlpack_values_copy(tensor, target=target, stream=stream)
         return self
 
     def _torch_dtype_name(dtype):
@@ -211,17 +256,21 @@ else:
             return "int32"
         raise TypeError(f"Unsupported torch dtype for PyRXMesh copy: {dtype}")
 
-    def _sparse_matrix_from_torch_csr_copy(source, dtype=None):
+    def _sparse_matrix_from_torch_copy(source, dtype=None, stream=None):
         torch = _require_torch()
         if source.layout != torch.sparse_csr:
-            raise TypeError("SparseMatrix.from_torch_csr_copy() expects a torch sparse CSR tensor.")
+            raise TypeError(
+                "SparseMatrix.from_torch_copy() expects a torch sparse CSR "
+                "tensor."
+            )
         value_dtype = dtype or _torch_dtype_name(source.values().dtype)
-        return SparseMatrix.from_csr_copy(
-            source.crow_indices().detach().cpu().numpy(),
-            source.col_indices().detach().cpu().numpy(),
-            source.values().detach().cpu().numpy(),
+        return SparseMatrix.from_dlpack_copy(
+            source.crow_indices().detach(),
+            source.col_indices().detach(),
+            source.values().detach(),
             tuple(source.shape),
             dtype=value_dtype,
+            stream=stream,
         )
 
     def _attribute_to_torch(self, location=Location.DEVICE):
@@ -233,23 +282,43 @@ else:
         self.from_dlpack_copy(tensor, target=target)
         return self
 
-    def _sparse_matrix_to_scipy_csr(self, source=Location.HOST, copy=True):
+    def _sparse_matrix_to_scipy_csr(self):
         try:
             import scipy.sparse as scipy_sparse
         except ImportError as exc:
             raise ImportError(
                 "SciPy is required for SparseMatrix.to_scipy_csr(). "
-                "Install scipy or use to_numpy_csr()."
+                "Install scipy or use to_numpy()."
             ) from exc
 
-        row_ptr, col_idx, values = self.to_numpy_csr(source=source, copy=copy)
+        row_ptr, col_idx, values = self.to_numpy(Location.HOST)
+        return scipy_sparse.csr_matrix((values, col_idx, row_ptr), shape=self.shape)
+
+    def _sparse_matrix_to_scipy_csr_copy(self, source=Location.HOST, stream=None):
+        try:
+            import scipy.sparse as scipy_sparse
+        except ImportError as exc:
+            raise ImportError(
+                "SciPy is required for SparseMatrix.to_scipy_csr_copy(). "
+                "Install scipy or use to_numpy_copy()."
+            ) from exc
+
+        row_ptr, col_idx, values = self.to_numpy_copy(source=source, stream=stream)
         return scipy_sparse.csr_matrix((values, col_idx, row_ptr), shape=self.shape)
 
     _native_sparse_matrix_multiply_vector = SparseMatrix.multiply_vector
 
-    def _sparse_matrix_multiply_vector(self, vector, alpha=1.0, beta=0.0):
+    def _sparse_matrix_multiply_vector(
+        self,
+        vector,
+        stream=None,
+    ):
         if isinstance(vector, DenseMatrix):
-            return _native_sparse_matrix_multiply_vector(self, vector, alpha, beta)
+            return _native_sparse_matrix_multiply_vector(
+                self,
+                vector,
+                stream,
+            )
 
         import numpy as np
 
@@ -272,15 +341,16 @@ else:
             dtype=self.dtype,
             location=Location.ALL,
         )
-        dense.from_numpy_copy(values, target=Location.ALL)
-        return _native_sparse_matrix_multiply_vector(self, dense, alpha, beta)
+        dense.from_numpy_copy(values, target=Location.ALL, stream=stream)
+        return _native_sparse_matrix_multiply_vector(self, dense, stream)
 
     DenseMatrix.to_torch = _dense_matrix_to_torch
     DenseMatrix.from_torch_copy = staticmethod(_dense_matrix_from_torch_copy)
     SparseMatrix.to_torch = _sparse_matrix_to_torch
-    SparseMatrix.from_torch_csr_copy = staticmethod(_sparse_matrix_from_torch_csr_copy)
+    SparseMatrix.from_torch_copy = staticmethod(_sparse_matrix_from_torch_copy)
     SparseMatrix.from_torch_values_copy = _sparse_matrix_from_torch_values_copy
     SparseMatrix.to_scipy_csr = _sparse_matrix_to_scipy_csr
+    SparseMatrix.to_scipy_csr_copy = _sparse_matrix_to_scipy_csr_copy
     SparseMatrix.multiply_vector = _sparse_matrix_multiply_vector
     _attribute_types = (
         Attribute,
