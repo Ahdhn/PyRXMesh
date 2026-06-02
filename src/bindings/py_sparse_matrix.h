@@ -478,8 +478,6 @@ struct PySparseMatrixT : PySparseMatrix
             },
             rhs.matrix,
             output->matrix);
-
-        output->move(rxmesh::DEVICE, rxmesh::HOST, cuda_stream);
         return output;
     }
 
@@ -521,8 +519,7 @@ struct PySparseMatrixT : PySparseMatrix
             },
             rhs.matrix,
             output->matrix);
-
-        output->move(rxmesh::DEVICE, rxmesh::HOST, cuda_stream);
+                
         return output;
     }
 
