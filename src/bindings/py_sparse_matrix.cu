@@ -130,8 +130,6 @@ void register_sparse_matrix(py::module_& m)
         .def("multiply_vector",
              &PySparseMatrix::multiply_vector,
              py::arg("rhs"),
-             py::arg("alpha")  = py::float_(1.0),
-             py::arg("beta")   = py::float_(0.0),
              py::arg("stream") = py::none())
         .def("transpose",
              &PySparseMatrix::transpose,
