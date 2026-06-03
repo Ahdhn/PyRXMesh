@@ -115,7 +115,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           python -m pip install auditwheel
-          auditwheel show wheelhouse/*.whl
+          for wheel in wheelhouse/*.whl; do
+            auditwheel show "$wheel"
+          done
 
       - name: Inspect Windows wheels
         if: runner.os == 'Windows'
