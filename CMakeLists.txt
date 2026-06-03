@@ -4,7 +4,15 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
     set(CMAKE_CUDA_ARCHITECTURES native)
 endif()
 
-project(PyRXMesh VERSION 0.2.1 LANGUAGES C CXX CUDA)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/pyproject.toml" PYRXMESH_PYPROJECT_TOML)
+string(REGEX MATCH
+    "\\[project\\][^[]*version[ \t]*=[ \t]*\"([^\"]+)\""
+    PYRXMESH_VERSION_MATCH
+    "${PYRXMESH_PYPROJECT_TOML}"
+)
+set(PYRXMESH_VERSION "${CMAKE_MATCH_1}")
+
+project(PyRXMesh LANGUAGES C CXX CUDA)
 # Increment when the compiled custom-plugin capsule/API contract changes incompatibly and old plugins will no longer work with the new PyRXMesh version. This is separate from the overall project version, which can be incremented for any change including compatible ones.
 set(PYRXMESH_PLUGIN_ABI_VERSION 2)
 
@@ -44,7 +52,7 @@ string(REPLACE ";" "," PYRXMESH_CUDA_ARCHITECTURES_TAG "${PYRXMESH_CUDA_ARCHITEC
 
 # Captures build options that plugins must match to safely link against this PyRXMesh/RXMesh install. Used by plugins to check compatibility at runtime and refuse to load if incompatible, preventing hard-to-debug crashes due to ABI incompatibility.
 set(PYRXMESH_BUILD_CONFIG_TAG
-    "abi=${PYRXMESH_PLUGIN_ABI_VERSION},pyrxmesh=${PROJECT_VERSION},rxmesh_repo=${PYRXMESH_RXMESH_GIT_REPO},rxmesh_tag=${PYRXMESH_RXMESH_GIT_TAG},rxmesh_source=${PYRXMESH_RXMESH_SOURCE_DIR_TAG},polyscope=${PYRXMESH_USE_POLYSCOPE},double=${PYRXMESH_USE_DOUBLE},cudss=${PYRXMESH_USE_CUDSS},suitesparse=${PYRXMESH_USE_SUITESPARSE},cuda_arch=${PYRXMESH_CUDA_ARCHITECTURES_TAG}"
+    "abi=${PYRXMESH_PLUGIN_ABI_VERSION},pyrxmesh=${PYRXMESH_VERSION},rxmesh_repo=${PYRXMESH_RXMESH_GIT_REPO},rxmesh_tag=${PYRXMESH_RXMESH_GIT_TAG},rxmesh_source=${PYRXMESH_RXMESH_SOURCE_DIR_TAG},polyscope=${PYRXMESH_USE_POLYSCOPE},double=${PYRXMESH_USE_DOUBLE},cudss=${PYRXMESH_USE_CUDSS},suitesparse=${PYRXMESH_USE_SUITESPARSE},cuda_arch=${PYRXMESH_CUDA_ARCHITECTURES_TAG}"
 )
 
 # RXMesh uses these option names internally. Force them before adding RXMesh so PyRXMesh controls the dependency build in both Git and local-source modes.

@@ -1,6 +1,6 @@
 {
   "abi_version": "@PYRXMESH_PLUGIN_ABI_VERSION@",
-  "pyrxmesh_version": "@PROJECT_VERSION@",
+  "pyrxmesh_version": "@PYRXMESH_VERSION@",
   "build_config_tag": "@PYRXMESH_BUILD_CONFIG_TAG@",
   "rxmesh_git_repository": "@PYRXMESH_RXMESH_GIT_REPO@",
   "rxmesh_git_tag": "@PYRXMESH_RXMESH_GIT_TAG@",
