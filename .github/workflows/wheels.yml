@@ -3,16 +3,10 @@ name: Build wheels
 on:
   pull_request:
   push:
-    branches:
-      - main
     tags:
       - "v*"
   workflow_dispatch:
     inputs:
-      rxmesh_ref:
-        description: "RXMesh tag or commit to build against. Use a pinned ref for publishing."
-        required: true
-        default: "main"
       publish:
         description: "Publish target"
         required: true
@@ -29,7 +23,6 @@ permissions:
 env:
   CUDA_VERSION: "12.6.3"
   CUDA_ARCHITECTURES: "75;80;86;89;90"
-  RXMESH_REF: ${{ github.event.inputs.rxmesh_ref || vars.PYRXMESH_RXMESH_GIT_TAG || 'main' }}
 
 jobs:
   wheels:
@@ -68,7 +61,6 @@ jobs:
           CIBW_BUILD_FRONTEND: "build"
           CIBW_CONFIG_SETTINGS: >-
             cmake.define.CMAKE_CUDA_ARCHITECTURES=${{ env.CUDA_ARCHITECTURES }}
-            cmake.define.PYRXMESH_RXMESH_GIT_TAG=${{ env.RXMESH_REF }}
             cmake.define.PYRXMESH_USE_POLYSCOPE=ON
             cmake.define.PYRXMESH_BUILD_RXMESH_TESTS=OFF
             cmake.define.PYRXMESH_BUILD_RXMESH_APPS=OFF
@@ -167,14 +159,6 @@ jobs:
       id-token: write
 
     steps:
-      - name: Require pinned RXMesh ref for publishing
-        shell: bash
-        run: |
-          if [[ -z "${RXMESH_REF}" || "${RXMESH_REF}" == "main" ]]; then
-            echo "Publishing requires a pinned RXMesh tag or commit. Set workflow input rxmesh_ref or repository variable PYRXMESH_RXMESH_GIT_TAG."
-            exit 1
-          fi
-
       - uses: actions/download-artifact@v4
         with:
           pattern: pyrxmesh-*
