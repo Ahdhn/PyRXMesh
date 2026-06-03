@@ -45,6 +45,7 @@ sdist.include = [
     "CMakeLists.txt",
     "LICENSE",
     "README.md",
+    "DEVELOPING.md",
     "CUSTOM_CUDA_PLUGINS.md",
     "cmake/**",
     "include/**",

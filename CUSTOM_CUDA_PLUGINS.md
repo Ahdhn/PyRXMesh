@@ -103,19 +103,5 @@ python examples/custom_kernel_plugin/run_edge_lengths.py --input mesh.obj
 The example package shows the intended split where Python loads the mesh and owns the workflow while `src/rxmesh_edge_lengths.cu` contains only the performance critical RXMesh lambda.
 
 
-## Incremental Builds
-
-Builds reuse a persistent scikit-build-core build directory:
-
-```text
-build/{wheel_tag}
-```
-
-The first install for a Python/platform/RXMesh tag combination is a full build. Subsequent installs with the same settings should be incremental. For the fastest developer loop, disable build isolation after installing the build requirements into the conda environment:
-
-```bash
-python -m pip install scikit-build-core pybind11
-python -m pip install -v --no-build-isolation . -Ccmake.define.PYRXMESH_RXMESH_GIT_TAG=<tag-or-commit>
-```
-
-To force a clean rebuild, delete the matching `build/<wheel_tag>` directory.
+For PyRXMesh source-build and incremental-build notes, see
+[DEVELOPING.md](DEVELOPING.md).
