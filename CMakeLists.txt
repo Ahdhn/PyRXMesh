@@ -44,6 +44,7 @@ set(PYRXMESH_BUILD_RXMESH_APPS "OFF" CACHE BOOL "Build RXMesh apps when building
 set(PYRXMESH_USE_DOUBLE "OFF" CACHE BOOL "Build RXMesh with double precision coordinate input")
 set(PYRXMESH_USE_CUDSS "OFF" CACHE BOOL "Build RXMesh with cuDSS support")
 set(PYRXMESH_USE_SUITESPARSE "OFF" CACHE BOOL "Build RXMesh with SuiteSparse support")
+set(PYRXMESH_INSTALL_PLUGIN_SDK "ON" CACHE BOOL "Install headers, libraries, and CMake files needed to build PyRXMesh plugins")
 
 
 string(REPLACE "\\" "/" PYRXMESH_RXMESH_SOURCE_DIR_TAG "${PYRXMESH_RXMESH_SOURCE_DIR}")
@@ -67,7 +68,11 @@ set(RXMESH_INSTALL_THIRD_PARTY_INCLUDEDIR "pyrxmesh/third_party/include" CACHE S
 set(RXMESH_INSTALL_LIBDIR "pyrxmesh/lib" CACHE STRING "" FORCE)
 set(RXMESH_INSTALL_BINDIR "pyrxmesh/bin" CACHE STRING "" FORCE)
 set(RXMESH_INSTALL_CMAKEDIR "pyrxmesh/cmake/RXMesh" CACHE STRING "" FORCE)
-set(RXMESH_INSTALL_COMPONENT "python" CACHE STRING "" FORCE)
+if(PYRXMESH_INSTALL_PLUGIN_SDK)
+    set(RXMESH_INSTALL_COMPONENT "python" CACHE STRING "" FORCE)
+else()
+    set(RXMESH_INSTALL_COMPONENT "plugin_sdk" CACHE STRING "" FORCE)
+endif()
 
 if(PYRXMESH_RXMESH_SOURCE_DIR)
     get_filename_component(PYRXMESH_RXMESH_SOURCE_DIR_ABS "${PYRXMESH_RXMESH_SOURCE_DIR}" ABSOLUTE)
@@ -162,16 +167,18 @@ configure_file(
     @ONLY
 )
 
-install(FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/pyrxmesh/plugin_api.h"
-    DESTINATION pyrxmesh/include/pyrxmesh
-    COMPONENT python
-)
-install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/pyrxmeshConfig.cmake"
-    DESTINATION pyrxmesh/cmake
-    COMPONENT python
-)
+if(PYRXMESH_INSTALL_PLUGIN_SDK)
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/pyrxmesh/plugin_api.h"
+        DESTINATION pyrxmesh/include/pyrxmesh
+        COMPONENT python
+    )
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/pyrxmeshConfig.cmake"
+        DESTINATION pyrxmesh/cmake
+        COMPONENT python
+    )
+endif()
 install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/build_config.json"
     DESTINATION pyrxmesh

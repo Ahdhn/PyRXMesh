@@ -64,6 +64,7 @@ jobs:
             cmake.define.PYRXMESH_USE_POLYSCOPE=ON
             cmake.define.PYRXMESH_BUILD_RXMESH_TESTS=OFF
             cmake.define.PYRXMESH_BUILD_RXMESH_APPS=OFF
+            cmake.define.PYRXMESH_INSTALL_PLUGIN_SDK=OFF
           CIBW_TEST_COMMAND: >-
             python -c "import pyrxmesh as rx; print(rx.abi_version()); print(rx.build_config_tag())"
           CIBW_BEFORE_BUILD: >-
