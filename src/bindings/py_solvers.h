@@ -68,7 +68,7 @@ inline void validate_solver_system(const PySparseMatrix& matrix,
     validate_solver_solution(matrix, solution, rhs, api);
 }
 
-template <typename SolveIntoFn>
+template <typename SolveFn>
 inline std::shared_ptr<PyDenseMatrix> make_solution_and_solve(
     const PySparseMatrix& matrix,
     int                   unknown_dim,
@@ -76,7 +76,7 @@ inline std::shared_ptr<PyDenseMatrix> make_solution_and_solve(
     py::object            initial_guess,
     bool                  run_pre_solve,
     const char*           api,
-    SolveIntoFn&&         solve_into_fn)
+    SolveFn&&             solve_fn)
 {
     validate_solver_rhs(matrix, unknown_dim, rhs, api);
     auto solution = make_dense_matrix(matrix.cols(),
@@ -95,7 +95,7 @@ inline std::shared_ptr<PyDenseMatrix> make_solution_and_solve(
                             static_cast<int>(rxmesh::LOCATION_ALL),
                             nullptr);
     }
-    solve_into_fn(rhs, *solution, run_pre_solve);
+    solve_fn(rhs, *solution, run_pre_solve);
     return solution;
 }
 
@@ -117,9 +117,9 @@ struct PyIterativeSolverBase
     virtual py::object  start_residual() const                          = 0;
     virtual py::object  final_residual() const                          = 0;
     virtual void pre_solve(PyDenseMatrix& rhs, PyDenseMatrix& solution) = 0;
-    virtual void solve_into(PyDenseMatrix& rhs,
-                            PyDenseMatrix& solution,
-                            bool           run_pre_solve)                         = 0;
+    virtual void solve(PyDenseMatrix& rhs,
+                       PyDenseMatrix& solution,
+                       bool           run_pre_solve)                              = 0;
 
     std::shared_ptr<PyDenseMatrix> solve(PyDenseMatrix& rhs,
                                          py::object     initial_guess,
@@ -133,7 +133,7 @@ struct PyIterativeSolverBase
             run_pre_solve,
             "Iterative solver",
             [this](PyDenseMatrix& r, PyDenseMatrix& s, bool ps) {
-                this->solve_into(r, s, ps);
+                this->solve(r, s, ps);
             });
     }
 
@@ -179,9 +179,9 @@ struct PyIterativeSolverT final : PyIterativeSolverBase<SolverT>
         CUDA_ERROR(cudaStreamSynchronize(nullptr));
     }
 
-    void solve_into(PyDenseMatrix& rhs,
-                    PyDenseMatrix& solution,
-                    bool           run_pre_solve) override
+    void solve(PyDenseMatrix& rhs,
+               PyDenseMatrix& solution,
+               bool           run_pre_solve) override
     {
         using namespace rxmesh;
         detail::validate_solver_system(*this->matrix,
@@ -261,9 +261,9 @@ struct PyDirectSolverBase
 
     virtual std::string name() const                          = 0;
     virtual void        pre_solve(rxmesh::RXMeshStatic& mesh) = 0;
-    virtual void        solve_into(PyDenseMatrix& rhs,
-                                   PyDenseMatrix& solution,
-                                   bool           run_pre_solve)        = 0;
+    virtual void        solve(PyDenseMatrix& rhs,
+                              PyDenseMatrix& solution,
+                              bool           run_pre_solve)             = 0;
 
     std::string permute() const
     {
@@ -287,7 +287,7 @@ struct PyDirectSolverBase
             run_pre_solve,
             "Direct solver",
             [this](PyDenseMatrix& r, PyDenseMatrix& s, bool ps) {
-                this->solve_into(r, s, ps);
+                this->solve(r, s, ps);
             });
     }
 
@@ -318,9 +318,9 @@ struct PyDirectSolverT final : PyDirectSolverBase<SolverT, Kind>
         this->factorized = true;
     }
 
-    void solve_into(PyDenseMatrix& rhs,
-                    PyDenseMatrix& solution,
-                    bool           run_pre_solve) override
+    void solve(PyDenseMatrix& rhs,
+               PyDenseMatrix& solution,
+               bool           run_pre_solve) override
     {
         using namespace rxmesh;
         detail::validate_solver_system(
@@ -421,9 +421,9 @@ struct PyCuDSSSolverBase
     virtual void        pre_solve(rxmesh::RXMeshStatic& mesh,
                                   PyDenseMatrix&        rhs,
                                   PyDenseMatrix&        solution) = 0;
-    virtual void        solve_into(PyDenseMatrix& rhs,
-                                   PyDenseMatrix& solution,
-                                   bool           run_pre_solve)     = 0;
+    virtual void        solve(PyDenseMatrix& rhs,
+                              PyDenseMatrix& solution,
+                              bool           run_pre_solve)          = 0;
 
     std::string permute() const
     {
@@ -447,7 +447,7 @@ struct PyCuDSSSolverBase
             run_pre_solve,
             "cuDSS direct solver",
             [this](PyDenseMatrix& r, PyDenseMatrix& s, bool ps) {
-                this->solve_into(r, s, ps);
+                this->solve(r, s, ps);
             });
     }
 
@@ -485,16 +485,16 @@ struct PyCuDSSSolverT final : PyCuDSSSolverBase<SolverT, Kind>
         this->factorized = true;
     }
 
-    void solve_into(PyDenseMatrix& rhs,
-                    PyDenseMatrix& solution,
-                    bool           run_pre_solve) override
+    void solve(PyDenseMatrix& rhs,
+               PyDenseMatrix& solution,
+               bool           run_pre_solve) override
     {
         detail::validate_solver_system(
             *this->matrix, 0, rhs, solution, "cuDSS direct solver");
         if (run_pre_solve && !this->factorized) {
             if (!this->matrix->mesh_owner) {
                 throw std::invalid_argument(
-                    "cuDSSCholeskySolver.solve_into(pre_solve=True) needs a "
+                    "cuDSSCholeskySolver.solve(pre_solve=True) needs a "
                     "mesh-owned SparseMatrix or an explicit pre_solve(mesh, "
                     "rhs, solution) call.");
             }
@@ -502,7 +502,7 @@ struct PyCuDSSSolverT final : PyCuDSSSolverBase<SolverT, Kind>
         }
         if (!this->factorized) {
             throw std::runtime_error(
-                "cuDSSCholeskySolver.solve_into() requires pre_solve() before "
+                "cuDSSCholeskySolver.solve() requires pre_solve() before "
                 "solve.");
         }
 

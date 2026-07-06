@@ -20,13 +20,15 @@ void register_solvers(py::module_& m)
              &PyCGSolver::pre_solve,
              py::arg("rhs"),
              py::arg("solution"))
-        .def("solve_into",
-             &PyCGSolver::solve_into,
+        .def("solve",
+             py::overload_cast<PyDenseMatrix&, PyDenseMatrix&, bool>(
+                 &PyCGSolver::solve),
              py::arg("rhs"),
              py::arg("solution"),
              py::arg("pre_solve") = true)
         .def("solve",
-             &PyCGSolver::solve,
+             py::overload_cast<PyDenseMatrix&, py::object, bool>(
+                 &PyCGSolver::solve),
              py::arg("rhs"),
              py::arg("initial_guess") = py::none(),
              py::arg("pre_solve")     = true);
@@ -47,13 +49,15 @@ void register_solvers(py::module_& m)
              &PyPCGSolver::pre_solve,
              py::arg("rhs"),
              py::arg("solution"))
-        .def("solve_into",
-             &PyPCGSolver::solve_into,
+        .def("solve",
+             py::overload_cast<PyDenseMatrix&, PyDenseMatrix&, bool>(
+                 &PyPCGSolver::solve),
              py::arg("rhs"),
              py::arg("solution"),
              py::arg("pre_solve") = true)
         .def("solve",
-             &PyPCGSolver::solve,
+             py::overload_cast<PyDenseMatrix&, py::object, bool>(
+                 &PyPCGSolver::solve),
              py::arg("rhs"),
              py::arg("initial_guess") = py::none(),
              py::arg("pre_solve")     = true);
@@ -69,13 +73,15 @@ void register_solvers(py::module_& m)
         .def_property_readonly("is_factorized",
                                &PyCholeskySolver::is_factorized)
         .def("pre_solve", &PyCholeskySolver::pre_solve, py::arg("mesh"))
-        .def("solve_into",
-             &PyCholeskySolver::solve_into,
+        .def("solve",
+             py::overload_cast<PyDenseMatrix&, PyDenseMatrix&, bool>(
+                 &PyCholeskySolver::solve),
              py::arg("rhs"),
              py::arg("solution"),
              py::arg("pre_solve") = false)
         .def("solve",
-             &PyCholeskySolver::solve,
+             py::overload_cast<PyDenseMatrix&, py::object, bool>(
+                 &PyCholeskySolver::solve),
              py::arg("rhs"),
              py::arg("initial_guess") = py::none(),
              py::arg("pre_solve")     = false);
@@ -89,13 +95,15 @@ void register_solvers(py::module_& m)
         .def_property_readonly("permute", &PyQRSolver::permute)
         .def_property_readonly("is_factorized", &PyQRSolver::is_factorized)
         .def("pre_solve", &PyQRSolver::pre_solve, py::arg("mesh"))
-        .def("solve_into",
-             &PyQRSolver::solve_into,
+        .def("solve",
+             py::overload_cast<PyDenseMatrix&, PyDenseMatrix&, bool>(
+                 &PyQRSolver::solve),
              py::arg("rhs"),
              py::arg("solution"),
              py::arg("pre_solve") = false)
         .def("solve",
-             &PyQRSolver::solve,
+             py::overload_cast<PyDenseMatrix&, py::object, bool>(
+                 &PyQRSolver::solve),
              py::arg("rhs"),
              py::arg("initial_guess") = py::none(),
              py::arg("pre_solve")     = false);
@@ -109,13 +117,15 @@ void register_solvers(py::module_& m)
         .def_property_readonly("permute", &PyLUSolver::permute)
         .def_property_readonly("is_factorized", &PyLUSolver::is_factorized)
         .def("pre_solve", &PyLUSolver::pre_solve, py::arg("mesh"))
-        .def("solve_into",
-             &PyLUSolver::solve_into,
+        .def("solve",
+             py::overload_cast<PyDenseMatrix&, PyDenseMatrix&, bool>(
+                 &PyLUSolver::solve),
              py::arg("rhs"),
              py::arg("solution"),
              py::arg("pre_solve") = false)
         .def("solve",
-             &PyLUSolver::solve,
+             py::overload_cast<PyDenseMatrix&, py::object, bool>(
+                 &PyLUSolver::solve),
              py::arg("rhs"),
              py::arg("initial_guess") = py::none(),
              py::arg("pre_solve")     = false);
@@ -144,13 +154,15 @@ void register_solvers(py::module_& m)
              py::arg("mesh"),
              py::arg("rhs"),
              py::arg("solution"))
-        .def("solve_into",
-             &PycuDSSCholeskySolver::solve_into,
+        .def("solve",
+             py::overload_cast<PyDenseMatrix&, PyDenseMatrix&, bool>(
+                 &PycuDSSCholeskySolver::solve),
              py::arg("rhs"),
              py::arg("solution"),
              py::arg("pre_solve") = true)
         .def("solve",
-             &PycuDSSCholeskySolver::solve,
+             py::overload_cast<PyDenseMatrix&, py::object, bool>(
+                 &PycuDSSCholeskySolver::solve),
              py::arg("rhs"),
              py::arg("initial_guess") = py::none(),
              py::arg("pre_solve")     = true);
