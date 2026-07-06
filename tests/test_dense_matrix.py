@@ -1,23 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pyrxmesh as rx
 import pytest
 import torch 
-
-try:
-    rx.init()
-except RuntimeError as exc:
-    if "logger with name 'RXMesh' already exists" not in str(exc):
-        raise
-
-
-def load_mesh() -> rx.RXMeshStatic:
-    mesh_path = Path(__file__).resolve().parents[1] / "meshes" / "sphere3.obj"
-    assert mesh_path.exists(), f"Missing test mesh: {mesh_path}"
-    return rx.RXMeshStatic(str(mesh_path), patch_size=256)
 
 
 def test_dense_matrix_numpy_round_trip_and_host_view_zero_copy() -> None:
@@ -241,8 +227,7 @@ def test_dense_matrix_from_dlpack_copy_cuda_passes_stream_to_producer() -> None:
     )
 
 
-def test_dense_matrix_mesh_constructor_supports_handle_access() -> None:
-    mesh = load_mesh()
+def test_dense_matrix_mesh_constructor_supports_handle_access(mesh) -> None:
     matrix = rx.DenseMatrix(
         mesh,
         mesh.num_vertices,
@@ -262,8 +247,7 @@ def test_dense_matrix_mesh_constructor_supports_handle_access() -> None:
     assert matrix.value(row, 0) == pytest.approx(3.25)
 
 
-def test_attribute_dense_matrix_round_trip() -> None:
-    mesh = load_mesh()
+def test_attribute_dense_matrix_round_trip(mesh) -> None:
     attr = mesh.add_vertex_attribute(
         "matrix_bridge_attr",
         dtype="float32",

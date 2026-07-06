@@ -8,21 +8,8 @@ import pytest
 import torch 
 import scipy.sparse as sp
 
-try:
-    rx.init()
-except RuntimeError as exc:
-    if "logger with name 'RXMesh' already exists" not in str(exc):
-        raise
 
-
-def load_mesh() -> rx.RXMeshStatic:
-    mesh_path = Path(__file__).resolve().parents[1] / "meshes" / "sphere3.obj"
-    assert mesh_path.exists(), f"Missing test mesh: {mesh_path}"
-    return rx.RXMeshStatic(str(mesh_path), patch_size=256)
-
-
-def test_sparse_matrix_metadata_and_csr_arrays() -> None:
-    mesh = load_mesh()
+def test_sparse_matrix_metadata_and_csr_arrays(mesh) -> None:
     matrix = mesh.sparse_matrix(rx.Op.VV, dtype="float32")
 
     assert matrix.rows == mesh.num_vertices
@@ -47,8 +34,7 @@ def test_sparse_matrix_metadata_and_csr_arrays() -> None:
     assert np.all((col_idx >= 0) & (col_idx < matrix.cols))
 
 
-def test_sparse_matrix_host_values_round_trip_and_zero_copy_view() -> None:
-    mesh = load_mesh()
+def test_sparse_matrix_host_values_round_trip_and_zero_copy_view(mesh) -> None:
     matrix = rx.SparseMatrix(mesh, rx.Op.VV, dtype="float64")
 
     values = np.linspace(0.0, 1.0, matrix.nnz, dtype=np.float64)
@@ -71,8 +57,7 @@ def test_sparse_matrix_host_values_round_trip_and_zero_copy_view() -> None:
         matrix.to_numpy(rx.Location.DEVICE)
 
 
-def test_sparse_matrix_host_entry_access() -> None:
-    mesh = load_mesh()
+def test_sparse_matrix_host_entry_access(mesh) -> None:
     matrix = mesh.sparse_matrix(dtype="float32")
     matrix.reset(2.5, location=rx.Location.ALL)
 
@@ -115,8 +100,7 @@ def test_sparse_matrix_from_numpy_copy_owns_memory() -> None:
     )
 
 
-def test_sparse_matrix_dense_multiply() -> None:
-    mesh = load_mesh()
+def test_sparse_matrix_dense_multiply(mesh) -> None:
     matrix = mesh.sparse_matrix(rx.Op.VV, dtype="float32")
     matrix.reset(1.0, location=rx.Location.ALL)
 
@@ -186,8 +170,7 @@ def test_sparse_matrix_dense_multiply() -> None:
         matrix.multiply_vector(vector, beta=0.0)
 
 
-def test_sparse_matrix_torch_csr_cpu_zero_copy() -> None:
-    mesh = load_mesh()
+def test_sparse_matrix_torch_csr_cpu_zero_copy(mesh) -> None:
     matrix = mesh.sparse_matrix(dtype="float32")
     matrix.reset(1.0, location=rx.Location.ALL)
     torch_matrix = matrix.to_torch(rx.Location.HOST)    
@@ -221,8 +204,7 @@ def test_sparse_matrix_from_torch_copy_cpu() -> None:
     )
 
 
-def test_sparse_matrix_torch_csr_cuda_zero_copy() -> None:
-    mesh = load_mesh()
+def test_sparse_matrix_torch_csr_cuda_zero_copy(mesh) -> None:
     matrix = mesh.sparse_matrix(dtype="float32")
     matrix.reset(3.0, location=rx.Location.ALL)
     torch_matrix = matrix.to_torch(rx.Location.DEVICE)    
@@ -240,8 +222,7 @@ def test_sparse_matrix_torch_csr_cuda_zero_copy() -> None:
     assert matrix.to_numpy_copy()[2][0] == pytest.approx(17.0)
 
 
-def test_sparse_matrix_from_torch_values_copy_cpu() -> None:
-    mesh = load_mesh()
+def test_sparse_matrix_from_torch_values_copy_cpu(mesh) -> None:
     matrix = mesh.sparse_matrix(dtype="float32")
     values = torch.arange(matrix.nnz, dtype=torch.float32)
 
@@ -268,8 +249,7 @@ def test_sparse_matrix_from_torch_copy_cuda() -> None:
     )
 
 
-def test_sparse_matrix_from_torch_values_copy_cuda() -> None:
-    mesh = load_mesh()
+def test_sparse_matrix_from_torch_values_copy_cuda(mesh) -> None:
     matrix = mesh.sparse_matrix(dtype="float32")
     values = torch.arange(matrix.nnz, dtype=torch.float32, device="cuda")
 
@@ -279,8 +259,7 @@ def test_sparse_matrix_from_torch_values_copy_cuda() -> None:
         np.arange(matrix.nnz, dtype=np.float32),
     )
 
-def test_sparse_matrix_scipy_multiply_vector(tmp_path: Path) -> None:    
-    mesh = load_mesh()
+def test_sparse_matrix_scipy_multiply_vector(mesh, tmp_path: Path) -> None:    
     matrix = mesh.sparse_matrix(rx.Op.VV, dtype="float32")
     matrix.reset(1.0, location=rx.Location.ALL)
 
@@ -297,9 +276,7 @@ def test_sparse_matrix_scipy_multiply_vector(tmp_path: Path) -> None:
     expected = scipy_matrix @ vector.reshape(-1, 1)
     np.testing.assert_allclose(result, expected, rtol=1e-5, atol=1e-5)
 
-def test_diff_sparse_matrix_containers() -> None:    
-    mesh = load_mesh()
-
+def test_diff_sparse_matrix_containers(mesh) -> None:
     jacobian = rx.JacobianSparseMatrix(
         mesh,
         [rx.Op.VV],

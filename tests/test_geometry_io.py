@@ -8,19 +8,6 @@ import pytest
 import scipy.sparse as sp
 
 
-try:
-    rx.init()
-except RuntimeError as exc:
-    if "logger with name 'RXMesh' already exists" not in str(exc):
-        raise
-
-
-def load_mesh() -> rx.RXMeshStatic:
-    mesh_path = Path(__file__).resolve().parents[1] / "meshes" / "sphere3.obj"
-    assert mesh_path.exists(), f"Missing test mesh: {mesh_path}"
-    return rx.RXMeshStatic(str(mesh_path), patch_size=256)
-
-
 def test_geometry_create_plane() -> None:    
     vertices, faces = rx.create_plane(
         4,
@@ -39,8 +26,7 @@ def test_geometry_create_plane() -> None:
     assert np.all(faces < len(vertices))
 
 
-def test_io_export_obj(tmp_path: Path) -> None:
-    mesh = load_mesh()
+def test_io_export_obj(mesh, tmp_path: Path) -> None:
     coords = mesh.input_vertex_coordinates()
 
     output_path = tmp_path / "sphere.obj"    
@@ -52,8 +38,7 @@ def test_io_export_obj(tmp_path: Path) -> None:
     assert "\nf " in f"\n{text}"
 
 
-def test_io_export_obj_rejects_non_vertex_coords(tmp_path: Path) -> None:    
-    mesh = load_mesh()
+def test_io_export_obj_rejects_non_vertex_coords(mesh, tmp_path: Path) -> None:    
     edge_attr = mesh.add_edge_attribute("bad_coords", dtype="float32", dim=3)
 
     with pytest.raises(ValueError):

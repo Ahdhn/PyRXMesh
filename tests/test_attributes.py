@@ -1,25 +1,10 @@
-from pathlib import Path
-
 import numpy as np
 import pyrxmesh as rx
 import pytest
 import torch 
 
-try:
-    rx.init()
-except RuntimeError as exc:
-    if "logger with name 'RXMesh' already exists" not in str(exc):
-        raise
 
-
-def load_mesh() -> rx.RXMeshStatic:
-    mesh_path = Path(__file__).resolve().parents[1] / "meshes" / "sphere3.obj"
-    assert mesh_path.exists(), f"Missing test mesh: {mesh_path}"
-    return rx.RXMeshStatic(str(mesh_path), patch_size=256)
-
-
-def test_attribute_metadata_allocation_and_numpy_round_trip() -> None:
-    mesh = load_mesh()
+def test_attribute_metadata_allocation_and_numpy_round_trip(mesh) -> None:
     attr = mesh.add_vertex_attribute(
         "py_vertex_vec3",
         dtype="float32",
@@ -59,8 +44,7 @@ def test_attribute_metadata_allocation_and_numpy_round_trip() -> None:
     np.testing.assert_allclose(attr.to_numpy_copy(source=rx.Location.HOST), 5.0)
 
 
-def test_attribute_numpy_view_zero_copy() -> None:
-    mesh = load_mesh()
+def test_attribute_numpy_view_zero_copy(mesh) -> None:
     attr = mesh.add_vertex_attribute(
         "numpy_view_attr",
         dtype="float32",
@@ -79,8 +63,7 @@ def test_attribute_numpy_view_zero_copy() -> None:
     assert attr.to_numpy_copy(source=rx.Location.HOST)[4, 2] == 42.0
 
 
-def test_attribute_numpy_view_rejects_aosoa_and_missing_host() -> None:
-    mesh = load_mesh()
+def test_attribute_numpy_view_rejects_aosoa_and_missing_host(mesh) -> None:
     aosoa = mesh.add_vertex_attribute(
         "numpy_view_bad_layout",
         dtype="float32",
@@ -105,8 +88,7 @@ def test_attribute_numpy_view_rejects_aosoa_and_missing_host() -> None:
         device_only.to_numpy(rx.Location.DEVICE)
 
 
-def test_attribute_torch_storage_view_zero_copy_host() -> None:
-    mesh = load_mesh()
+def test_attribute_torch_storage_view_zero_copy_host(mesh) -> None:
     attr = mesh.add_vertex_attribute(
         "torch_storage_attr",
         dtype="float32",
@@ -127,8 +109,7 @@ def test_attribute_torch_storage_view_zero_copy_host() -> None:
     np.testing.assert_allclose(attr.to_numpy_copy(source=rx.Location.HOST), 13.0)
 
 
-def test_attribute_torch_storage_view_zero_copy_cuda() -> None:
-    mesh = load_mesh()
+def test_attribute_torch_storage_view_zero_copy_cuda(mesh) -> None:
     attr = mesh.add_vertex_attribute(
         "torch_storage_attr_cuda",
         dtype="float32",
@@ -150,8 +131,7 @@ def test_attribute_torch_storage_view_zero_copy_cuda() -> None:
     assert attr.to_numpy_copy(source=rx.Location.HOST)[3, 1] == 77.0
 
 
-def test_attribute_from_torch_copy_cpu() -> None:
-    mesh = load_mesh()
+def test_attribute_from_torch_copy_cpu(mesh) -> None:
     attr = mesh.add_vertex_attribute(
         "torch_copy_attr",
         dtype="float32",
@@ -174,8 +154,7 @@ def test_attribute_from_torch_copy_cpu() -> None:
     )
 
 
-def test_attribute_from_torch_copy_cuda() -> None:
-    mesh = load_mesh()
+def test_attribute_from_torch_copy_cuda(mesh) -> None:
     attr = mesh.add_vertex_attribute(
         "torch_copy_attr_cuda",
         dtype="float32",
@@ -195,8 +174,7 @@ def test_attribute_from_torch_copy_cuda() -> None:
     )
 
 
-def test_attribute_like_copy_and_remove() -> None:
-    mesh = load_mesh()
+def test_attribute_like_copy_and_remove(mesh) -> None:
     src = mesh.add_edge_attribute(
         "py_edge_src",
         dtype="int32",
@@ -224,8 +202,7 @@ def test_attribute_like_copy_and_remove() -> None:
     assert "py_edge_dst" not in mesh.attribute_names()
 
 
-def test_attribute_reductions_float32() -> None:
-    mesh = load_mesh()
+def test_attribute_reductions_float32(mesh) -> None:
     attr = mesh.add_vertex_attribute(
         "py_reduce_values",
         dtype="float32",

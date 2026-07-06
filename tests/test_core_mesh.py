@@ -3,18 +3,6 @@ import numpy as np
 import pyrxmesh as rx
 import pytest
 
-try:
-    rx.init()
-except RuntimeError as exc:
-    if "logger with name 'RXMesh' already exists" not in str(exc):
-        raise
-
-
-def load_mesh() -> rx.RXMeshStatic:
-    mesh_path = Path(__file__).resolve().parents[1] / "meshes" / "sphere3.obj"
-    assert mesh_path.exists(), f"Missing test mesh: {mesh_path}"
-    return rx.RXMeshStatic(str(mesh_path), patch_size=256)
-
 
 def test_handle_round_trip_and_repr() -> None:
     vertex = rx.VertexHandle(7, 3)
@@ -39,9 +27,7 @@ def test_handle_round_trip_and_repr() -> None:
     assert dedge.flipped() != dedge
 
 
-def test_core_mesh_metadata_and_topology_arrays() -> None:
-    mesh = load_mesh()
-
+def test_core_mesh_metadata_and_topology_arrays(mesh) -> None:
     assert mesh.num_vertices > 0
     assert mesh.num_faces > 0
     assert mesh.num_edges > 0
@@ -61,9 +47,7 @@ def test_core_mesh_metadata_and_topology_arrays() -> None:
     assert np.all(faces < mesh.num_vertices)
 
 
-def test_mesh_handle_arrays_and_mapping() -> None:
-    mesh = load_mesh()
-
+def test_mesh_handle_arrays_and_mapping(mesh) -> None:
     vertex_handles = mesh.vertex_handles()
     edge_handles = mesh.edge_handles()
     face_handles = mesh.face_handles()
@@ -86,9 +70,7 @@ def test_mesh_handle_arrays_and_mapping() -> None:
     assert 0 <= mesh.linear_id(edge) < mesh.num_edges
     assert 0 <= mesh.linear_id(face) < mesh.num_faces
 
-def test_host_iteration_callbacks() -> None:
-    mesh = load_mesh()
-
+def test_host_iteration_callbacks(mesh) -> None:
     vertices: list[int] = []
     edges: list[int] = []
     faces: list[int] = []
@@ -102,9 +84,7 @@ def test_host_iteration_callbacks() -> None:
     assert sorted(faces) == list(range(mesh.num_faces))
 
 
-def test_bounding_box_scale_and_save_patcher(tmp_path: Path) -> None:
-    mesh = load_mesh()
-
+def test_bounding_box_scale_and_save_patcher(mesh, tmp_path: Path) -> None:
     lower, upper = mesh.bounding_box()
     assert lower.shape == (3,)
     assert upper.shape == (3,)
