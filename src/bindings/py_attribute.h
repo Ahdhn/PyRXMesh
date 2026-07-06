@@ -1,6 +1,8 @@
 #pragma once
 
 #include "bindings/common.h"
+#include "bindings/dispatch.h"
+#include "bindings/plugin_launch.h"
 #include "bindings/py_dense_matrix.h"
 
 #include <unordered_map>
@@ -151,8 +153,7 @@ struct PyAttribute final : PyAttributeBase
 
     PyAttribute(std::shared_ptr<rxmesh::RXMeshStatic> owner,
                 AttrPtr<T, HandleT>                   attr_ptr)
-        : PyAttributeBase(std::move(owner)),
-          attr(std::move(attr_ptr))
+        : PyAttributeBase(std::move(owner)), attr(std::move(attr_ptr))
     {
     }
 
@@ -352,9 +353,9 @@ struct PyAttribute final : PyAttributeBase
         } else {
             ensure_allocated(*attr, rxmesh::HOST);
             auto mat = attr->template to_matrix<Eigen::ColMajor>();
-            DenseMatrixVariant matrix = mat;
-            return py::cast(std::make_shared<PyDenseMatrix>(
-                std::move(matrix), rxmesh::LOCATION_ALL));
+            return py::cast(std::static_pointer_cast<PyDenseMatrix>(
+                std::make_shared<PyDenseMatrixT<T>>(std::move(mat),
+                                                    rxmesh::LOCATION_ALL)));
         }
     }
 
@@ -370,20 +371,9 @@ struct PyAttribute final : PyAttributeBase
 
             ensure_host_writable(*attr);
 
-            std::visit(
-                [&](auto& mat) {
-                    using MatT = std::decay_t<decltype(mat)>;
-                    if constexpr (std::is_same_v<
-                                      T,
-                                      typename MatT::element_type::Type>) {
-                        attr->template from_matrix<Eigen::ColMajor>(mat.get());
-                    } else {
-                        throw std::invalid_argument(
-                            "Attribute.from_matrix_copy() requires an exactly "
-                            "matching DenseMatrix dtype.");
-                    }
-                },
-                dense->matrix);
+            auto& typed =
+                as_typed_dense<T>(*dense, "Attribute.from_matrix_copy()");
+            attr->template from_matrix<Eigen::ColMajor>(typed.matrix.get());
 
             if ((dst & rxmesh::DEVICE) == rxmesh::DEVICE) {
                 attr->move(rxmesh::HOST, rxmesh::DEVICE);
@@ -577,26 +567,13 @@ py::object add_typed_attribute(
     int                                          location,
     int                                          layout)
 {
-    const DType parsed_dtype = parse_dtype(dtype);
-    const auto  loc          = parse_location(location);
-    const auto  mem_layout   = parse_layout(layout);
-
-    switch (parsed_dtype) {
-        case DType::Float32:
-            return make_attribute_object<HandleT, float>(
-                mesh, name, dim, loc, mem_layout);
-        case DType::Float64:
-            return make_attribute_object<HandleT, double>(
-                mesh, name, dim, loc, mem_layout);
-        case DType::Int32:
-            return make_attribute_object<HandleT, int32_t>(
-                mesh, name, dim, loc, mem_layout);
-        case DType::Int8:
-            return make_attribute_object<HandleT, int8_t>(
-                mesh, name, dim, loc, mem_layout);
-        default:
-            throw std::invalid_argument("Unsupported RXMesh attribute dtype.");
-    }
+    const auto loc        = parse_location(location);
+    const auto mem_layout = parse_layout(layout);
+    return dispatch_dtype_str(dtype, [&](auto tag) {
+        using T = typename decltype(tag)::type;
+        return make_attribute_object<HandleT, T>(
+            mesh, name, dim, loc, mem_layout);
+    });
 }
 
 inline py::object add_attribute_like(

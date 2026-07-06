@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bindings/py_dense_matrix.h"
 #include "bindings/py_sparse_matrix.h"
 
 #include "rxmesh/matrix/cg_solver.h"
@@ -19,251 +20,252 @@ enum class DirectSolverKind
     cuDSSCholesky,
 };
 
-template <template <typename, int> class SolverT>
-using IterativeSolverVariant =
-    std::variant<std::shared_ptr<SolverT<float, Eigen::ColMajor>>,
-                 std::shared_ptr<SolverT<double, Eigen::ColMajor>>>;
+namespace detail {
 
-template <template <typename, int> class SolverT>
-using DirectSolverVariant = std::variant<
-    std::shared_ptr<SolverT<rxmesh::SparseMatrix<float>, Eigen::ColMajor>>,
-    std::shared_ptr<SolverT<rxmesh::SparseMatrix<double>, Eigen::ColMajor>>>;
-
-template <typename T>
-using DenseMatrixPtr = std::shared_ptr<rxmesh::DenseMatrix<T, Eigen::ColMajor>>;
-
-template <template <typename, int> class SolverT>
-struct PyIterativeSolver
+inline void validate_solver_rhs(const PySparseMatrix& matrix,
+                                int                   unknown_dim,
+                                const PyDenseMatrix&  rhs,
+                                const char*           api)
 {
-    PyIterativeSolver(std::shared_ptr<PySparseMatrix> matrix_in,
-                      int                             unknown_dim,
-                      int                             max_iter,
-                      py::object                      abs_tol,
-                      py::object                      rel_tol,
-                      int                             reset_residual_freq)
-        : matrix(std::move(matrix_in)), unknown_dim(unknown_dim)
-    {
-        if (!matrix) {
-            throw std::invalid_argument("Solver requires a SparseMatrix.");
-        }
-        if (matrix->rows() != matrix->cols()) {
-            throw std::invalid_argument(
-                "Iterative solvers require a square SparseMatrix.");
-        }
-        if (unknown_dim <= 0) {
-            throw std::invalid_argument("Solver unknown_dim must be positive.");
-        }
-        matrix->ensure_device_readable();
+    if (matrix.dtype() != rhs.dtype()) {
+        throw std::invalid_argument(std::string(api) +
+                                    " rhs dtype must match the SparseMatrix "
+                                    "dtype.");
+    }
+    if (rhs.rows() != matrix.rows()) {
+        throw std::invalid_argument(std::string(api) +
+                                    " rhs rows must match SparseMatrix rows.");
+    }
+    if (unknown_dim > 0 && rhs.cols() != unknown_dim) {
+        throw std::invalid_argument(
+            std::string(api) + " rhs columns must match solver unknown_dim.");
+    }
+}
 
-        with_float_double_sparse_matrix(
+inline void validate_solver_solution(const PySparseMatrix& matrix,
+                                     const PyDenseMatrix&  solution,
+                                     const PyDenseMatrix&  rhs,
+                                     const char*           api)
+{
+    if (solution.dtype() != rhs.dtype()) {
+        throw std::invalid_argument(std::string(api) +
+                                    " solution dtype must match rhs dtype.");
+    }
+    if (solution.rows() != matrix.cols() || solution.cols() != rhs.cols()) {
+        throw std::invalid_argument(std::string(api) +
+                                    " solution shape must be "
+                                    "(SparseMatrix.cols, rhs.cols).");
+    }
+}
+
+inline void validate_solver_system(const PySparseMatrix& matrix,
+                                   int                   unknown_dim,
+                                   const PyDenseMatrix&  rhs,
+                                   const PyDenseMatrix&  solution,
+                                   const char*           api)
+{
+    validate_solver_rhs(matrix, unknown_dim, rhs, api);
+    validate_solver_solution(matrix, solution, rhs, api);
+}
+
+template <typename SolveIntoFn>
+inline std::shared_ptr<PyDenseMatrix> make_solution_and_solve(
+    const PySparseMatrix& matrix,
+    int                   unknown_dim,
+    PyDenseMatrix&        rhs,
+    py::object            initial_guess,
+    bool                  run_pre_solve,
+    const char*           api,
+    SolveIntoFn&&         solve_into_fn)
+{
+    validate_solver_rhs(matrix, unknown_dim, rhs, api);
+    auto solution = make_dense_matrix(matrix.cols(),
+                                      rhs.cols(),
+                                      rhs.dtype(),
+                                      static_cast<int>(rxmesh::LOCATION_ALL),
+                                      "col_major");
+    if (initial_guess.is_none()) {
+        solution->reset(
+            py::float_(0.0), static_cast<int>(rxmesh::LOCATION_ALL), nullptr);
+    } else {
+        auto initial = initial_guess.cast<std::shared_ptr<PyDenseMatrix>>();
+        validate_solver_solution(matrix, *initial, rhs, api);
+        solution->copy_from(*initial,
+                            static_cast<int>(rxmesh::LOCATION_ALL),
+                            static_cast<int>(rxmesh::LOCATION_ALL),
+                            nullptr);
+    }
+    solve_into_fn(rhs, *solution, run_pre_solve);
+    return solution;
+}
+
+}  // namespace detail
+
+
+// -----------------------------------------------------------------------------
+// Iterative solvers (CG, PCG)
+// -----------------------------------------------------------------------------
+
+template <template <typename, int> class SolverT>
+struct PyIterativeSolverBase
+    : std::enable_shared_from_this<PyIterativeSolverBase<SolverT>>
+{
+    virtual ~PyIterativeSolverBase() = default;
+
+    virtual std::string name() const                                    = 0;
+    virtual int         iter_taken() const                              = 0;
+    virtual py::object  start_residual() const                          = 0;
+    virtual py::object  final_residual() const                          = 0;
+    virtual void pre_solve(PyDenseMatrix& rhs, PyDenseMatrix& solution) = 0;
+    virtual void solve_into(PyDenseMatrix& rhs,
+                            PyDenseMatrix& solution,
+                            bool           run_pre_solve)                         = 0;
+
+    std::shared_ptr<PyDenseMatrix> solve(PyDenseMatrix& rhs,
+                                         py::object     initial_guess,
+                                         bool           run_pre_solve)
+    {
+        return detail::make_solution_and_solve(
             *matrix,
-            "Iterative solvers",
-            [&](auto& sparse_mat) {
-                using SparseMatT = std::decay_t<decltype(sparse_mat)>;
-                using T          = typename SparseMatT::element_type::Type;
-                solver = std::make_shared<SolverT<T, Eigen::ColMajor>>(
-                    *sparse_mat,
-                    unknown_dim,
-                    max_iter,
-                    abs_tol.cast<T>(),
-                    rel_tol.cast<T>(),
-                    reset_residual_freq);
+            unknown_dim,
+            rhs,
+            std::move(initial_guess),
+            run_pre_solve,
+            "Iterative solver",
+            [this](PyDenseMatrix& r, PyDenseMatrix& s, bool ps) {
+                this->solve_into(r, s, ps);
             });
     }
 
-    std::string name()
+    std::shared_ptr<PySparseMatrix> matrix;
+    int                             unknown_dim = 1;
+};
+
+template <typename T, template <typename, int> class SolverT>
+struct PyIterativeSolverT final : PyIterativeSolverBase<SolverT>
+{
+    using SolverImplT = SolverT<T, Eigen::ColMajor>;
+    std::shared_ptr<SolverImplT> solver;
+
+    std::string name() const override
     {
-        return std::visit([](auto& solver_ptr) { return solver_ptr->name(); },
-                          solver);
+        return solver->name();
+    }
+    int iter_taken() const override
+    {
+        return solver->iter_taken();
+    }
+    py::object start_residual() const override
+    {
+        return py::cast(solver->start_residual());
+    }
+    py::object final_residual() const override
+    {
+        return py::cast(solver->final_residual());
     }
 
-    int iter_taken()
-    {
-        return std::visit(
-            [](auto& solver_ptr) { return solver_ptr->iter_taken(); }, solver);
-    }
-
-    py::object start_residual()
-    {
-        return std::visit(
-            [](auto& solver_ptr) -> py::object {
-                return py::cast(solver_ptr->start_residual());
-            },
-            solver);
-    }
-
-    py::object final_residual()
-    {
-        return std::visit(
-            [](auto& solver_ptr) -> py::object {
-                return py::cast(solver_ptr->final_residual());
-            },
-            solver);
-    }
-
-    void pre_solve(PyDenseMatrix& rhs, PyDenseMatrix& solution)
+    void pre_solve(PyDenseMatrix& rhs, PyDenseMatrix& solution) override
     {
         using namespace rxmesh;
-        validate_system(rhs, solution);
+        detail::validate_solver_system(*this->matrix,
+                                       this->unknown_dim,
+                                       rhs,
+                                       solution,
+                                       "Iterative solver");
 
-        std::visit(
-            [&](auto& solver_ptr) {
-                pre_solve_typed(solver_ptr, rhs, solution);
-            },
-            solver);
+        auto& rhs_t      = as_typed_dense<T>(rhs, "Iterative solver");
+        auto& solution_t = as_typed_dense<T>(solution, "Iterative solver");
+        solver->pre_solve(*rhs_t.matrix, *solution_t.matrix);
         CUDA_ERROR(cudaStreamSynchronize(nullptr));
     }
 
     void solve_into(PyDenseMatrix& rhs,
                     PyDenseMatrix& solution,
-                    bool           run_pre_solve)
+                    bool           run_pre_solve) override
     {
         using namespace rxmesh;
-        validate_system(rhs, solution);
+        detail::validate_solver_system(*this->matrix,
+                                       this->unknown_dim,
+                                       rhs,
+                                       solution,
+                                       "Iterative solver");
 
         if (run_pre_solve) {
             pre_solve(rhs, solution);
         }
 
-        std::visit(
-            [&](auto& solver_ptr) { solve_typed(solver_ptr, rhs, solution); },
-            solver);
+        auto& rhs_t      = as_typed_dense<T>(rhs, "Iterative solver");
+        auto& solution_t = as_typed_dense<T>(solution, "Iterative solver");
+        solver->solve(*rhs_t.matrix, *solution_t.matrix);
 
         CUDA_ERROR(cudaStreamSynchronize(nullptr));
-        solution.move(rxmesh::DEVICE, rxmesh::HOST);
-    }
-
-    std::shared_ptr<PyDenseMatrix> solve(PyDenseMatrix& rhs,
-                                         py::object     initial_guess,
-                                         bool           run_pre_solve)
-    {
-        validate_rhs(rhs);
-        auto solution = std::make_shared<PyDenseMatrix>(
-            rhs.dtype(),
-            matrix->cols(),
-            rhs.cols(),
-            static_cast<int>(rxmesh::LOCATION_ALL),
-            "col_major");
-
-        if (initial_guess.is_none()) {
-            solution->reset(py::float_(0.0),
-                            static_cast<int>(rxmesh::LOCATION_ALL));
-        } else {
-            auto initial = initial_guess.cast<std::shared_ptr<PyDenseMatrix>>();
-            validate_solution(*initial, rhs);
-            solution->copy_from(*initial,
-                                static_cast<int>(rxmesh::LOCATION_ALL),
-                                static_cast<int>(rxmesh::LOCATION_ALL));
-        }
-
-        solve_into(rhs, *solution, run_pre_solve);
-        return solution;
-    }
-
-    std::shared_ptr<PySparseMatrix> matrix;
-    int                             unknown_dim;
-    IterativeSolverVariant<SolverT> solver;
-
-   private:
-    template <typename SolverPtrT>
-    void pre_solve_typed(SolverPtrT&    solver_ptr,
-                         PyDenseMatrix& rhs,
-                         PyDenseMatrix& solution)
-    {
-        using T            = typename SolverPtrT::element_type::Type;
-        auto& rhs_mat      = std::get<DenseMatrixPtr<T>>(rhs.matrix);
-        auto& solution_mat = std::get<DenseMatrixPtr<T>>(solution.matrix);
-        solver_ptr->pre_solve(*rhs_mat, *solution_mat);
-    }
-
-    template <typename SolverPtrT>
-    void solve_typed(SolverPtrT&    solver_ptr,
-                     PyDenseMatrix& rhs,
-                     PyDenseMatrix& solution)
-    {
-        using T            = typename SolverPtrT::element_type::Type;
-        auto& rhs_mat      = std::get<DenseMatrixPtr<T>>(rhs.matrix);
-        auto& solution_mat = std::get<DenseMatrixPtr<T>>(solution.matrix);
-        solver_ptr->solve(*rhs_mat, *solution_mat);
-    }
-
-    void validate_rhs(const PyDenseMatrix& rhs) const
-    {
-        if (matrix->dtype() != rhs.dtype()) {
-            throw std::invalid_argument(
-                "Solver rhs dtype must match the SparseMatrix dtype.");
-        }
-        if (rhs.rows() != matrix->rows()) {
-            throw std::invalid_argument(
-                "Solver rhs rows must match SparseMatrix rows.");
-        }
-        if (rhs.cols() != unknown_dim) {
-            throw std::invalid_argument(
-                "Solver rhs columns must match solver unknown_dim.");
-        }
-    }
-
-    void validate_solution(const PyDenseMatrix& solution,
-                           const PyDenseMatrix& rhs) const
-    {
-        if (solution.dtype() != rhs.dtype()) {
-            throw std::invalid_argument(
-                "Solver solution dtype must match rhs dtype.");
-        }
-        if (solution.rows() != matrix->cols() ||
-            solution.cols() != rhs.cols()) {
-            throw std::invalid_argument(
-                "Solver solution shape must be (SparseMatrix.cols, rhs.cols).");
-        }
-    }
-
-    void validate_system(const PyDenseMatrix& rhs,
-                         const PyDenseMatrix& solution) const
-    {
-        validate_rhs(rhs);
-        validate_solution(solution, rhs);
+        solution.move(rxmesh::DEVICE, rxmesh::HOST, nullptr);
     }
 };
 
-using PyCGSolver  = PyIterativeSolver<rxmesh::CGSolver>;
-using PyPCGSolver = PyIterativeSolver<rxmesh::PCGSolver>;
+using PyCGSolver  = PyIterativeSolverBase<rxmesh::CGSolver>;
+using PyPCGSolver = PyIterativeSolverBase<rxmesh::PCGSolver>;
+
+template <template <typename, int> class SolverT>
+inline std::shared_ptr<PyIterativeSolverBase<SolverT>> make_iterative_solver(
+    std::shared_ptr<PySparseMatrix> matrix,
+    int                             unknown_dim,
+    int                             max_iter,
+    py::object                      abs_tol,
+    py::object                      rel_tol,
+    int                             reset_residual_freq)
+{
+    if (!matrix) {
+        throw std::invalid_argument("Solver requires a SparseMatrix.");
+    }
+    if (matrix->rows() != matrix->cols()) {
+        throw std::invalid_argument(
+            "Iterative solvers require a square SparseMatrix.");
+    }
+    if (unknown_dim <= 0) {
+        throw std::invalid_argument("Solver unknown_dim must be positive.");
+    }
+    matrix->ensure_device_readable();
+
+    std::shared_ptr<PyIterativeSolverBase<SolverT>> result;
+    with_float_double_sparse_matrix(
+        *matrix, "Iterative solvers", [&](auto& sparse_mat) {
+            using SparseMatT = std::decay_t<decltype(sparse_mat)>;
+            using T          = typename SparseMatT::element_type::Type;
+            auto wrapper = std::make_shared<PyIterativeSolverT<T, SolverT>>();
+            wrapper->matrix      = matrix;
+            wrapper->unknown_dim = unknown_dim;
+            wrapper->solver = std::make_shared<SolverT<T, Eigen::ColMajor>>(
+                *sparse_mat,
+                unknown_dim,
+                max_iter,
+                abs_tol.cast<T>(),
+                rel_tol.cast<T>(),
+                reset_residual_freq);
+            result = std::static_pointer_cast<PyIterativeSolverBase<SolverT>>(
+                wrapper);
+        });
+    return result;
+}
+
+
+// -----------------------------------------------------------------------------
+// Direct solvers (Cholesky, QR, LU)
+// -----------------------------------------------------------------------------
 
 template <template <typename, int> class SolverT, DirectSolverKind Kind>
-struct PyDirectSolver
+struct PyDirectSolverBase
+    : std::enable_shared_from_this<PyDirectSolverBase<SolverT, Kind>>
 {
-    PyDirectSolver(std::shared_ptr<PySparseMatrix> matrix_in,
-                   std::string                     permute)
-        : matrix(std::move(matrix_in)),
-          permute_method(rxmesh::string_to_permute_method(std::move(permute)))
-    {
-        if (!matrix) {
-            throw std::invalid_argument(
-                "Direct solver requires a SparseMatrix.");
-        }
-        if (matrix->rows() != matrix->cols()) {
-            throw std::invalid_argument(
-                "Direct solvers require a square SparseMatrix.");
-        }
+    virtual ~PyDirectSolverBase() = default;
 
-        with_float_double_sparse_matrix(
-            *matrix,
-            "Direct solvers",
-            [&](auto& sparse_mat) {
-                using SparseMatT = std::decay_t<decltype(sparse_mat)>;
-                using T          = typename SparseMatT::element_type::Type;
-                solver = std::make_shared<
-                    SolverT<rxmesh::SparseMatrix<T>, Eigen::ColMajor>>(
-                    sparse_mat.get(), permute_method);
-            });
-    }
+    virtual std::string name() const                          = 0;
+    virtual void        pre_solve(rxmesh::RXMeshStatic& mesh) = 0;
+    virtual void        solve_into(PyDenseMatrix& rhs,
+                                   PyDenseMatrix& solution,
+                                   bool           run_pre_solve)        = 0;
 
-    std::string name()
-    {
-        return std::visit([](auto& solver_ptr) { return solver_ptr->name(); },
-                          solver);
-    }
-
-    std::string permute()
+    std::string permute() const
     {
         return rxmesh::permute_method_to_string(permute_method);
     }
@@ -273,182 +275,157 @@ struct PyDirectSolver
         return factorized;
     }
 
-    void pre_solve(rxmesh::RXMeshStatic& mesh)
+    std::shared_ptr<PyDenseMatrix> solve(PyDenseMatrix& rhs,
+                                         py::object     initial_guess,
+                                         bool           run_pre_solve)
+    {
+        return detail::make_solution_and_solve(
+            *matrix,
+            0,
+            rhs,
+            std::move(initial_guess),
+            run_pre_solve,
+            "Direct solver",
+            [this](PyDenseMatrix& r, PyDenseMatrix& s, bool ps) {
+                this->solve_into(r, s, ps);
+            });
+    }
+
+    std::shared_ptr<PySparseMatrix> matrix;
+    rxmesh::PermuteMethod permute_method = rxmesh::PermuteMethod::NONE;
+    bool                  factorized     = false;
+};
+
+template <typename T,
+          template <typename, int> class SolverT,
+          DirectSolverKind Kind>
+struct PyDirectSolverT final : PyDirectSolverBase<SolverT, Kind>
+{
+    using SolverImplT = SolverT<rxmesh::SparseMatrix<T>, Eigen::ColMajor>;
+    std::shared_ptr<SolverImplT> solver;
+
+    std::string name() const override
+    {
+        return solver->name();
+    }
+
+    void pre_solve(rxmesh::RXMeshStatic& mesh) override
     {
         using namespace rxmesh;
         prepare_matrix_for_device_solver();
-        std::visit([&](auto& solver_ptr) { solver_ptr->pre_solve(mesh); },
-                   solver);
+        solver->pre_solve(mesh);
         CUDA_ERROR(cudaStreamSynchronize(nullptr));
-        factorized = true;
+        this->factorized = true;
     }
 
     void solve_into(PyDenseMatrix& rhs,
                     PyDenseMatrix& solution,
-                    bool           run_pre_solve)
+                    bool           run_pre_solve) override
     {
         using namespace rxmesh;
-        validate_system(rhs, solution);
+        detail::validate_solver_system(
+            *this->matrix, 0, rhs, solution, "Direct solver");
 
         if constexpr (Kind == DirectSolverKind::LU) {
-            prepare_matrix_for_host_solver();
+            this->matrix->ensure_host_readable();
         } else {
             prepare_matrix_for_device_solver();
         }
 
-        if (run_pre_solve && !factorized && matrix->mesh_owner) {
-            pre_solve(*matrix->mesh_owner);
+        if (run_pre_solve && !this->factorized && this->matrix->mesh_owner) {
+            pre_solve(*this->matrix->mesh_owner);
         }
 
-        std::visit(
-            [&](auto& solver_ptr) { solve_typed(solver_ptr, rhs, solution); },
-            solver);
-
-        CUDA_ERROR(cudaStreamSynchronize(nullptr));
-        if constexpr (Kind != DirectSolverKind::LU) {
-            solution.move(rxmesh::DEVICE, rxmesh::HOST);
-        }
-    }
-
-    std::shared_ptr<PyDenseMatrix> solve(PyDenseMatrix& rhs,
-                                         py::object     initial_guess,
-                                         bool           run_pre_solve)
-    {
-        validate_rhs(rhs);
-        auto solution = std::make_shared<PyDenseMatrix>(
-            rhs.dtype(),
-            matrix->cols(),
-            rhs.cols(),
-            static_cast<int>(rxmesh::LOCATION_ALL),
-            "col_major");
-
-        if (initial_guess.is_none()) {
-            solution->reset(py::float_(0.0),
-                            static_cast<int>(rxmesh::LOCATION_ALL));
-        } else {
-            auto initial = initial_guess.cast<std::shared_ptr<PyDenseMatrix>>();
-            validate_solution(*initial, rhs);
-            solution->copy_from(*initial,
-                                static_cast<int>(rxmesh::LOCATION_ALL),
-                                static_cast<int>(rxmesh::LOCATION_ALL));
-        }
-
-        solve_into(rhs, *solution, run_pre_solve);
-        return solution;
-    }
-
-    std::shared_ptr<PySparseMatrix> matrix;
-    rxmesh::PermuteMethod           permute_method;
-    DirectSolverVariant<SolverT>    solver;
-    bool                            factorized = false;
-
-   private:
-    void prepare_matrix_for_host_solver()
-    {
-        matrix->ensure_host_readable();
-    }
-
-    void prepare_matrix_for_device_solver()
-    {
-        matrix->ensure_host_readable();
-        matrix->ensure_device_readable();
-    }
-
-    template <typename SolverPtrT>
-    void solve_typed(SolverPtrT&    solver_ptr,
-                     PyDenseMatrix& rhs,
-                     PyDenseMatrix& solution)
-    {
-        using T            = typename SolverPtrT::element_type::T;
-        auto& rhs_mat      = std::get<DenseMatrixPtr<T>>(rhs.matrix);
-        auto& solution_mat = std::get<DenseMatrixPtr<T>>(solution.matrix);
+        auto& rhs_t      = as_typed_dense<T>(rhs, "Direct solver");
+        auto& solution_t = as_typed_dense<T>(solution, "Direct solver");
 
         if constexpr (Kind == DirectSolverKind::Cholesky ||
                       Kind == DirectSolverKind::QR) {
-            if (factorized) {
-                solver_ptr->solve(*rhs_mat, *solution_mat);
+            if (this->factorized) {
+                solver->solve(*rhs_t.matrix, *solution_t.matrix);
             } else {
-                solver_ptr->solve_hl_api(*rhs_mat, *solution_mat);
+                solver->solve_hl_api(*rhs_t.matrix, *solution_t.matrix);
             }
         } else {
-            solver_ptr->solve(*rhs_mat, *solution_mat);
+            solver->solve(*rhs_t.matrix, *solution_t.matrix);
+        }
+
+        CUDA_ERROR(cudaStreamSynchronize(nullptr));
+        if constexpr (Kind != DirectSolverKind::LU) {
+            solution.move(rxmesh::DEVICE, rxmesh::HOST, nullptr);
         }
     }
 
-    void validate_rhs(const PyDenseMatrix& rhs) const
+   private:
+    void prepare_matrix_for_device_solver()
     {
-        if (matrix->dtype() != rhs.dtype()) {
-            throw std::invalid_argument(
-                "Direct solver rhs dtype must match the SparseMatrix dtype.");
-        }
-        if (rhs.rows() != matrix->rows()) {
-            throw std::invalid_argument(
-                "Direct solver rhs rows must match SparseMatrix rows.");
-        }
-    }
-
-    void validate_solution(const PyDenseMatrix& solution,
-                           const PyDenseMatrix& rhs) const
-    {
-        if (solution.dtype() != rhs.dtype()) {
-            throw std::invalid_argument(
-                "Direct solver solution dtype must match rhs dtype.");
-        }
-        if (solution.rows() != matrix->cols() ||
-            solution.cols() != rhs.cols()) {
-            throw std::invalid_argument(
-                "Direct solver solution shape must be (SparseMatrix.cols, "
-                "rhs.cols).");
-        }
-    }
-
-    void validate_system(const PyDenseMatrix& rhs,
-                         const PyDenseMatrix& solution) const
-    {
-        validate_rhs(rhs);
-        validate_solution(solution, rhs);
+        this->matrix->ensure_host_readable();
+        this->matrix->ensure_device_readable();
     }
 };
 
-#ifdef USE_CUDSS
+using PyCholeskySolver =
+    PyDirectSolverBase<rxmesh::CholeskySolver, DirectSolverKind::Cholesky>;
+using PyQRSolver = PyDirectSolverBase<rxmesh::QRSolver, DirectSolverKind::QR>;
+using PyLUSolver = PyDirectSolverBase<rxmesh::LUSolver, DirectSolverKind::LU>;
+
 template <template <typename, int> class SolverT, DirectSolverKind Kind>
-struct PyCuDSSDirectSolver
+inline std::shared_ptr<PyDirectSolverBase<SolverT, Kind>> make_direct_solver(
+    std::shared_ptr<PySparseMatrix> matrix,
+    std::string                     permute)
 {
-    PyCuDSSDirectSolver(std::shared_ptr<PySparseMatrix> matrix_in,
-                        std::string                     permute)
-        : matrix(std::move(matrix_in)),
-          permute_method(rxmesh::string_to_permute_method(std::move(permute)))
-    {
-        if (!matrix) {
-            throw std::invalid_argument(
-                "cuDSS direct solver requires a SparseMatrix.");
-        }
-        if (matrix->rows() != matrix->cols()) {
-            throw std::invalid_argument(
-                "cuDSS direct solvers require a square SparseMatrix.");
-        }
-        matrix->ensure_host_readable();
-        matrix->ensure_device_readable();
-
-        with_float_double_sparse_matrix(
-            *matrix,
-            "cuDSS direct solvers",
-            [&](auto& sparse_mat) {
-                using SparseMatT = std::decay_t<decltype(sparse_mat)>;
-                using T          = typename SparseMatT::element_type::Type;
-                solver = std::make_shared<
-                    SolverT<rxmesh::SparseMatrix<T>, Eigen::ColMajor>>(
-                    sparse_mat.get(), permute_method);
-            });
+    if (!matrix) {
+        throw std::invalid_argument("Direct solver requires a SparseMatrix.");
+    }
+    if (matrix->rows() != matrix->cols()) {
+        throw std::invalid_argument(
+            "Direct solvers require a square SparseMatrix.");
     }
 
-    std::string name()
-    {
-        return std::visit([](auto& solver_ptr) { return solver_ptr->name(); },
-                          solver);
-    }
+    const rxmesh::PermuteMethod permute_method =
+        rxmesh::string_to_permute_method(std::move(permute));
 
-    std::string permute()
+    std::shared_ptr<PyDirectSolverBase<SolverT, Kind>> result;
+    with_float_double_sparse_matrix(
+        *matrix, "Direct solvers", [&](auto& sparse_mat) {
+            using SparseMatT = std::decay_t<decltype(sparse_mat)>;
+            using T          = typename SparseMatT::element_type::Type;
+            auto wrapper =
+                std::make_shared<PyDirectSolverT<T, SolverT, Kind>>();
+            wrapper->matrix         = matrix;
+            wrapper->permute_method = permute_method;
+            wrapper->solver         = std::make_shared<
+                        SolverT<rxmesh::SparseMatrix<T>, Eigen::ColMajor>>(
+                sparse_mat.get(), permute_method);
+            result =
+                std::static_pointer_cast<PyDirectSolverBase<SolverT, Kind>>(
+                    wrapper);
+        });
+    return result;
+}
+
+
+// -----------------------------------------------------------------------------
+// cuDSS direct solver (optional, requires PYRXMESH_USE_CUDSS=ON)
+// -----------------------------------------------------------------------------
+
+#ifdef USE_CUDSS
+
+template <template <typename, int> class SolverT, DirectSolverKind Kind>
+struct PyCuDSSSolverBase
+    : std::enable_shared_from_this<PyCuDSSSolverBase<SolverT, Kind>>
+{
+    virtual ~PyCuDSSSolverBase() = default;
+
+    virtual std::string name() const                       = 0;
+    virtual void        pre_solve(rxmesh::RXMeshStatic& mesh,
+                                  PyDenseMatrix&        rhs,
+                                  PyDenseMatrix&        solution) = 0;
+    virtual void        solve_into(PyDenseMatrix& rhs,
+                                   PyDenseMatrix& solution,
+                                   bool           run_pre_solve)     = 0;
+
+    std::string permute() const
     {
         return rxmesh::permute_method_to_string(permute_method);
     }
@@ -458,130 +435,127 @@ struct PyCuDSSDirectSolver
         return factorized;
     }
 
+    std::shared_ptr<PyDenseMatrix> solve(PyDenseMatrix& rhs,
+                                         py::object     initial_guess,
+                                         bool           run_pre_solve)
+    {
+        return detail::make_solution_and_solve(
+            *matrix,
+            0,
+            rhs,
+            std::move(initial_guess),
+            run_pre_solve,
+            "cuDSS direct solver",
+            [this](PyDenseMatrix& r, PyDenseMatrix& s, bool ps) {
+                this->solve_into(r, s, ps);
+            });
+    }
+
+    std::shared_ptr<PySparseMatrix> matrix;
+    rxmesh::PermuteMethod permute_method = rxmesh::PermuteMethod::NONE;
+    bool                  factorized     = false;
+};
+
+template <typename T,
+          template <typename, int> class SolverT,
+          DirectSolverKind Kind>
+struct PyCuDSSSolverT final : PyCuDSSSolverBase<SolverT, Kind>
+{
+    using SolverImplT = SolverT<rxmesh::SparseMatrix<T>, Eigen::ColMajor>;
+    std::shared_ptr<SolverImplT> solver;
+
+    std::string name() const override
+    {
+        return solver->name();
+    }
+
     void pre_solve(rxmesh::RXMeshStatic& mesh,
                    PyDenseMatrix&        rhs,
-                   PyDenseMatrix&        solution)
+                   PyDenseMatrix&        solution) override
     {
-        validate_system(rhs, solution);
-        matrix->ensure_host_readable();
-        matrix->ensure_device_readable();
+        detail::validate_solver_system(
+            *this->matrix, 0, rhs, solution, "cuDSS direct solver");
+        this->matrix->ensure_host_readable();
+        this->matrix->ensure_device_readable();
 
-        std::visit(
-            [&](auto& solver_ptr) {
-                using SolverPtrT = std::decay_t<decltype(solver_ptr)>;
-                using T          = typename SolverPtrT::element_type::T;
-                auto& rhs_mat    = std::get<DenseMatrixPtr<T>>(rhs.matrix);
-                auto& solution_mat =
-                    std::get<DenseMatrixPtr<T>>(solution.matrix);
-                solver_ptr->pre_solve(mesh, *rhs_mat, *solution_mat);
-            },
-            solver);
+        auto& rhs_t      = as_typed_dense<T>(rhs, "cuDSS direct solver");
+        auto& solution_t = as_typed_dense<T>(solution, "cuDSS direct solver");
+        solver->pre_solve(mesh, *rhs_t.matrix, *solution_t.matrix);
         CUDA_ERROR(cudaStreamSynchronize(nullptr));
-        factorized = true;
+        this->factorized = true;
     }
 
     void solve_into(PyDenseMatrix& rhs,
                     PyDenseMatrix& solution,
-                    bool           run_pre_solve)
+                    bool           run_pre_solve) override
     {
-        validate_system(rhs, solution);
-        if (run_pre_solve && !factorized) {
-            if (!matrix->mesh_owner) {
+        detail::validate_solver_system(
+            *this->matrix, 0, rhs, solution, "cuDSS direct solver");
+        if (run_pre_solve && !this->factorized) {
+            if (!this->matrix->mesh_owner) {
                 throw std::invalid_argument(
                     "cuDSSCholeskySolver.solve_into(pre_solve=True) needs a "
                     "mesh-owned SparseMatrix or an explicit pre_solve(mesh, "
                     "rhs, solution) call.");
             }
-            pre_solve(*matrix->mesh_owner, rhs, solution);
+            pre_solve(*this->matrix->mesh_owner, rhs, solution);
         }
-        if (!factorized) {
+        if (!this->factorized) {
             throw std::runtime_error(
                 "cuDSSCholeskySolver.solve_into() requires pre_solve() before "
                 "solve.");
         }
 
-        std::visit(
-            [&](auto& solver_ptr) {
-                using SolverPtrT = std::decay_t<decltype(solver_ptr)>;
-                using T          = typename SolverPtrT::element_type::T;
-                auto& rhs_mat    = std::get<DenseMatrixPtr<T>>(rhs.matrix);
-                auto& solution_mat =
-                    std::get<DenseMatrixPtr<T>>(solution.matrix);
-                solver_ptr->solve(*rhs_mat, *solution_mat);
-            },
-            solver);
+        auto& rhs_t      = as_typed_dense<T>(rhs, "cuDSS direct solver");
+        auto& solution_t = as_typed_dense<T>(solution, "cuDSS direct solver");
+        solver->solve(*rhs_t.matrix, *solution_t.matrix);
         CUDA_ERROR(cudaStreamSynchronize(nullptr));
 
-        solution.move(rxmesh::DEVICE, rxmesh::HOST);
-    }
-
-    std::shared_ptr<PyDenseMatrix> solve(PyDenseMatrix& rhs,
-                                         py::object     initial_guess,
-                                         bool           run_pre_solve)
-    {
-        validate_rhs(rhs);
-        auto solution = std::make_shared<PyDenseMatrix>(
-            rhs.dtype(),
-            matrix->cols(),
-            rhs.cols(),
-            static_cast<int>(rxmesh::LOCATION_ALL),
-            "col_major");
-        if (initial_guess.is_none()) {
-            solution->reset(py::float_(0.0),
-                            static_cast<int>(rxmesh::LOCATION_ALL));
-        } else {
-            auto initial = initial_guess.cast<std::shared_ptr<PyDenseMatrix>>();
-            validate_solution(*initial, rhs);
-            solution->copy_from(*initial,
-                                static_cast<int>(rxmesh::LOCATION_ALL),
-                                static_cast<int>(rxmesh::LOCATION_ALL));
-        }
-        solve_into(rhs, *solution, run_pre_solve);
-        return solution;
-    }
-
-    std::shared_ptr<PySparseMatrix> matrix;
-    rxmesh::PermuteMethod           permute_method;
-    DirectSolverVariant<SolverT>    solver;
-    bool                            factorized = false;
-
-   private:
-    void validate_rhs(const PyDenseMatrix& rhs) const
-    {
-        if (matrix->dtype() != rhs.dtype()) {
-            throw std::invalid_argument(
-                "cuDSS direct solver rhs dtype must match the SparseMatrix "
-                "dtype.");
-        }
-        if (rhs.rows() != matrix->rows()) {
-            throw std::invalid_argument(
-                "cuDSS direct solver rhs rows must match SparseMatrix rows.");
-        }
-    }
-
-    void validate_solution(const PyDenseMatrix& solution,
-                           const PyDenseMatrix& rhs) const
-    {
-        if (solution.dtype() != rhs.dtype()) {
-            throw std::invalid_argument(
-                "cuDSS direct solver solution dtype must match rhs dtype.");
-        }
-        if (solution.rows() != matrix->cols() ||
-            solution.cols() != rhs.cols()) {
-            throw std::invalid_argument(
-                "cuDSS direct solver solution shape must be "
-                "(SparseMatrix.cols, rhs.cols).");
-        }
-    }
-
-    void validate_system(const PyDenseMatrix& rhs,
-                         const PyDenseMatrix& solution) const
-    {
-        validate_rhs(rhs);
-        validate_solution(solution, rhs);
+        solution.move(rxmesh::DEVICE, rxmesh::HOST, nullptr);
     }
 };
-#endif
+
+using PycuDSSCholeskySolver =
+    PyCuDSSSolverBase<rxmesh::cuDSSCholeskySolver,
+                      DirectSolverKind::cuDSSCholesky>;
+
+template <template <typename, int> class SolverT, DirectSolverKind Kind>
+inline std::shared_ptr<PyCuDSSSolverBase<SolverT, Kind>> make_cudss_solver(
+    std::shared_ptr<PySparseMatrix> matrix,
+    std::string                     permute)
+{
+    if (!matrix) {
+        throw std::invalid_argument(
+            "cuDSS direct solver requires a SparseMatrix.");
+    }
+    if (matrix->rows() != matrix->cols()) {
+        throw std::invalid_argument(
+            "cuDSS direct solvers require a square SparseMatrix.");
+    }
+    matrix->ensure_host_readable();
+    matrix->ensure_device_readable();
+
+    const rxmesh::PermuteMethod permute_method =
+        rxmesh::string_to_permute_method(std::move(permute));
+
+    std::shared_ptr<PyCuDSSSolverBase<SolverT, Kind>> result;
+    with_float_double_sparse_matrix(
+        *matrix, "cuDSS direct solvers", [&](auto& sparse_mat) {
+            using SparseMatT = std::decay_t<decltype(sparse_mat)>;
+            using T          = typename SparseMatT::element_type::Type;
+            auto wrapper = std::make_shared<PyCuDSSSolverT<T, SolverT, Kind>>();
+            wrapper->matrix         = matrix;
+            wrapper->permute_method = permute_method;
+            wrapper->solver         = std::make_shared<
+                        SolverT<rxmesh::SparseMatrix<T>, Eigen::ColMajor>>(
+                sparse_mat.get(), permute_method);
+            result = std::static_pointer_cast<PyCuDSSSolverBase<SolverT, Kind>>(
+                wrapper);
+        });
+    return result;
+}
+
+#endif  // USE_CUDSS
 
 struct PyUnavailableCuDSSCholeskySolver
 {
@@ -593,15 +567,5 @@ struct PyUnavailableCuDSSCholeskySolver
             "PYRXMESH_USE_CUDSS=ON.");
     }
 };
-
-using PyCholeskySolver =
-    PyDirectSolver<rxmesh::CholeskySolver, DirectSolverKind::Cholesky>;
-using PyQRSolver = PyDirectSolver<rxmesh::QRSolver, DirectSolverKind::QR>;
-using PyLUSolver = PyDirectSolver<rxmesh::LUSolver, DirectSolverKind::LU>;
-#ifdef USE_CUDSS
-using PycuDSSCholeskySolver =
-    PyCuDSSDirectSolver<rxmesh::cuDSSCholeskySolver,
-                        DirectSolverKind::cuDSSCholesky>;
-#endif
 
 }  // namespace pyrxmesh_py

@@ -98,7 +98,10 @@ pybind11_add_module(_rxmesh MODULE
     src/bindings/handles.cu
     src/bindings/mesh.cu
     src/bindings/common.h
+    src/bindings/dispatch.h
+    src/bindings/plugin_launch.h
     src/bindings/dlpack_minimal.h
+    src/bindings/dlpack_utils.h
 
     src/bindings/py_attributes.cu
     src/bindings/py_attribute.h

@@ -1,4 +1,5 @@
 #include "bindings/dlpack_minimal.h"
+#include "bindings/dlpack_utils.h"
 #include "bindings/py_attribute.h"
 
 #include <cuda_runtime_api.h>
@@ -54,29 +55,6 @@ __global__ void copy_dlpack_to_row_major_kernel(T*       dst,
     dst[row * cols + col] = src[row * stride0 + col * stride1];
 }
 
-dlpack::DLDataType attribute_dlpack_dtype(DType dtype)
-{
-    switch (dtype) {
-        case DType::Float32:
-            return {2, 32, 1};
-        case DType::Float64:
-            return {2, 64, 1};
-        case DType::Int32:
-            return {0, 32, 1};
-        case DType::Int8:
-            return {0, 8, 1};
-        default:
-            throw std::invalid_argument(
-                "Attribute.to_dlpack() encountered an unsupported dtype.");
-    }
-}
-
-bool dlpack_dtype_equal(dlpack::DLDataType lhs, dlpack::DLDataType rhs)
-{
-    return lhs.code == rhs.code && lhs.bits == rhs.bits &&
-           lhs.lanes == rhs.lanes;
-}
-
 void require_attribute_tensor_view(const PyAttributeBase& self,
                                    rxmesh::locationT      location,
                                    const char*            api)
@@ -104,27 +82,6 @@ void require_attribute_tensor_view(const PyAttributeBase& self,
             " requires an existing DEVICE allocation. Move or create the "
             "attribute on DEVICE, or use the explicit *_copy API.");
     }
-}
-
-void dlpack_capsule_destructor(PyObject* capsule)
-{
-    if (PyCapsule_IsValid(capsule, "used_dltensor")) {
-        return;
-    }
-    if (!PyCapsule_IsValid(capsule, "dltensor")) {
-        return;
-    }
-    auto* managed = static_cast<dlpack::DLManagedTensor*>(
-        PyCapsule_GetPointer(capsule, "dltensor"));
-    if (managed && managed->deleter) {
-        managed->deleter(managed);
-    }
-}
-
-void dlpack_managed_tensor_deleter(dlpack::DLManagedTensor* self)
-{
-    delete static_cast<AttributeDlpackContext*>(self->manager_ctx);
-    delete self;
 }
 
 py::capsule attribute_to_dlpack(std::shared_ptr<PyAttributeBase> self,
@@ -156,14 +113,15 @@ py::capsule attribute_to_dlpack(std::shared_ptr<PyAttributeBase> self,
     managed->dl_tensor.device = {
         loc == rxmesh::DEVICE ? dlpack::kDLCUDA : dlpack::kDLCPU, device_id};
     managed->dl_tensor.ndim  = 2;
-    managed->dl_tensor.dtype = attribute_dlpack_dtype(context->owner->dtype());
+    managed->dl_tensor.dtype = dlpack_util::dtype_for(context->owner->dtype());
     managed->dl_tensor.shape = context->shape;
     managed->dl_tensor.strides     = context->strides;
     managed->dl_tensor.byte_offset = 0;
     managed->manager_ctx           = context;
-    managed->deleter               = dlpack_managed_tensor_deleter;
+    managed->deleter =
+        dlpack_util::managed_tensor_deleter<AttributeDlpackContext>;
 
-    return py::capsule(managed, "dltensor", dlpack_capsule_destructor);
+    return py::capsule(managed, "dltensor", dlpack_util::capsule_destructor);
 }
 
 py::capsule attribute_dunder_dlpack(std::shared_ptr<PyAttributeBase> self,
@@ -177,38 +135,8 @@ py::capsule attribute_dunder_dlpack(std::shared_ptr<PyAttributeBase> self,
 
 py::tuple attribute_dlpack_device(const PyAttributeBase& self)
 {
-    if (self.is_device_allocated()) {
-        int device_id = 0;
-        CUDA_ERROR(cudaGetDevice(&device_id));
-        return py::make_tuple(static_cast<int>(dlpack::kDLCUDA), device_id);
-    }
-    if (self.is_host_allocated()) {
-        return py::make_tuple(static_cast<int>(dlpack::kDLCPU), 0);
-    }
-    throw std::runtime_error("Attribute has no allocated memory.");
-}
-
-py::object acquire_dlpack_capsule(py::object source)
-{
-    if (PyCapsule_IsValid(source.ptr(), "dltensor")) {
-        return source;
-    }
-    if (!py::hasattr(source, "__dlpack__")) {
-        throw std::invalid_argument(
-            "Attribute.from_dlpack_copy() expects a DLPack capsule or an "
-            "object with __dlpack__().");
-    }
-    return source.attr("__dlpack__")();
-}
-
-void mark_dlpack_capsule_consumed(py::object               capsule,
-                                  dlpack::DLManagedTensor* managed)
-{
-    if (managed && managed->deleter) {
-        managed->deleter(managed);
-    }
-    PyCapsule_SetName(capsule.ptr(), "used_dltensor");
-    PyCapsule_SetDestructor(capsule.ptr(), nullptr);
+    return dlpack_util::device_tuple(
+        self.is_device_allocated(), self.is_host_allocated(), "Attribute");
 }
 
 void validate_dlpack_attribute_shape(const PyAttributeBase&  self,
@@ -291,8 +219,8 @@ void copy_dlpack_to_attribute(PyAttribute<T, HandleT>& self,
 {
     validate_dlpack_attribute_shape(self, tensor);
 
-    const auto expected_dtype = attribute_dlpack_dtype(self.dtype());
-    if (!dlpack_dtype_equal(tensor.dtype, expected_dtype)) {
+    const auto expected_dtype = dlpack_util::dtype_for(self.dtype());
+    if (!dlpack_util::dtype_equal(tensor.dtype, expected_dtype)) {
         throw std::invalid_argument(
             "Attribute.from_dlpack_copy() tensor dtype does not match the "
             "attribute dtype.");
@@ -379,7 +307,8 @@ void attribute_from_dlpack_copy(PyAttributeBase& self,
                                 py::object       source,
                                 int              target)
 {
-    py::object capsule = acquire_dlpack_capsule(std::move(source));
+    py::object capsule = dlpack_util::acquire_capsule(
+        std::move(source), "Attribute.from_dlpack_copy()");
 
     auto* managed = static_cast<dlpack::DLManagedTensor*>(
         PyCapsule_GetPointer(capsule.ptr(), "dltensor"));
@@ -419,7 +348,7 @@ void attribute_from_dlpack_copy(PyAttributeBase& self,
                 self, tensor, dst) ||
             try_copy_dlpack_to_attribute<int8_t, rxmesh::FaceHandle>(
                 self, tensor, dst)) {
-            mark_dlpack_capsule_consumed(capsule, managed);
+            dlpack_util::mark_consumed(capsule, managed);
             return;
         }
 
@@ -427,7 +356,7 @@ void attribute_from_dlpack_copy(PyAttributeBase& self,
             "Attribute.from_dlpack_copy() received an unsupported attribute "
             "type.");
     } catch (...) {
-        mark_dlpack_capsule_consumed(capsule, managed);
+        dlpack_util::mark_consumed(capsule, managed);
         throw;
     }
 }

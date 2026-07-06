@@ -1,6 +1,8 @@
 #pragma once
 
+#include "bindings/dispatch.h"
 #include "bindings/dlpack_minimal.h"
+#include "bindings/dlpack_utils.h"
 #include "bindings/py_dense_matrix.h"
 
 #include <cuda_runtime_api.h>
@@ -10,85 +12,12 @@
 
 namespace pyrxmesh_py {
 
-template <typename T>
-inline dlpack::DLDataType dlpack_dtype()
-{
-    if constexpr (std::is_same_v<T, float>) {
-        return {2, 32, 1};
-    } else if constexpr (std::is_same_v<T, double>) {
-        return {2, 64, 1};
-    } else if constexpr (std::is_same_v<T, int32_t>) {
-        return {0, 32, 1};
-    } else {
-        static_assert(always_false<T>::value, "Unsupported DenseMatrix dtype");
-    }
-}
-
-inline std::string dtype_name_from_dlpack(dlpack::DLDataType dtype)
-{
-    if (dtype.code == 2 && dtype.bits == 32 && dtype.lanes == 1) {
-        return "float32";
-    }
-    if (dtype.code == 2 && dtype.bits == 64 && dtype.lanes == 1) {
-        return "float64";
-    }
-    if (dtype.code == 0 && dtype.bits == 32 && dtype.lanes == 1) {
-        return "int32";
-    }
-    throw std::invalid_argument(
-        "DenseMatrix.from_dlpack_copy() supports float32, float64, and int32 "
-        "tensors.");
-}
-
 struct DlpackContext
 {
     std::shared_ptr<PyDenseMatrix> owner;
     int64_t                        shape[2];
     int64_t                        strides[2];
 };
-
-inline bool is_cuda_dlpack_no_sync_stream(py::object stream)
-{
-    //https://data-apis.org/array-api/2024.12/API_specification/generated/array_api.array.__dlpack__.html
-    return !stream.is_none() && cuda_stream_arg_value(std::move(stream)) == -1;
-}
-
-inline py::object default_cuda_dlpack_stream_arg()
-{
-    return py::int_(1);
-}
-
-inline bool source_dlpack_device_is_cuda(py::object source)
-{
-    if (!py::hasattr(source, "__dlpack_device__")) {
-        return false;
-    }
-    py::tuple device = source.attr("__dlpack_device__")().cast<py::tuple>();
-    if (py::len(device) < 1) {
-        return false;
-    }
-    return device[0].cast<int>() == static_cast<int>(dlpack::kDLCUDA);
-}
-
-inline void synchronize_dense_dlpack_export_stream(py::object stream)
-{
-    using namespace rxmesh;
-    if (is_cuda_dlpack_no_sync_stream(stream)) {
-        return;
-    }
-
-    cudaStream_t consumer_stream = parse_cuda_stream_arg(std::move(stream));
-    if (consumer_stream == nullptr) {
-        CUDA_ERROR(cudaStreamSynchronize(nullptr));
-        return;
-    }
-
-    cudaEvent_t event = nullptr;
-    CUDA_ERROR(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));
-    CUDA_ERROR(cudaEventRecord(event, nullptr));
-    CUDA_ERROR(cudaStreamWaitEvent(consumer_stream, event, 0));
-    CUDA_ERROR(cudaEventDestroy(event));
-}
 
 template <typename T>
 __global__ void copy_dlpack_to_dense_col_major_kernel(T*       dst,
@@ -107,27 +36,6 @@ __global__ void copy_dlpack_to_dense_col_major_kernel(T*       dst,
     const int64_t row = idx % rows;
     const int64_t col = idx / rows;
     dst[idx]          = src[row * stride0 + col * stride1];
-}
-
-inline void dense_dlpack_capsule_destructor(PyObject* capsule)
-{
-    if (PyCapsule_IsValid(capsule, "used_dltensor")) {
-        return;
-    }
-    if (!PyCapsule_IsValid(capsule, "dltensor")) {
-        return;
-    }
-    auto* managed = static_cast<dlpack::DLManagedTensor*>(
-        PyCapsule_GetPointer(capsule, "dltensor"));
-    if (managed && managed->deleter) {
-        managed->deleter(managed);
-    }
-}
-
-inline void dense_dlpack_managed_tensor_deleter(dlpack::DLManagedTensor* self)
-{
-    delete static_cast<DlpackContext*>(self->manager_ctx);
-    delete self;
 }
 
 inline py::capsule dense_matrix_to_dlpack(std::shared_ptr<PyDenseMatrix> self,
@@ -156,57 +64,49 @@ inline py::capsule dense_matrix_to_dlpack(std::shared_ptr<PyDenseMatrix> self,
                 "DenseMatrix.to_dlpack(Location.HOST) requires stream=None.");
         }
     } else {
-        synchronize_dense_dlpack_export_stream(std::move(stream));
+        dlpack_util::synchronize_export_stream(std::move(stream));
     }
 
     auto* managed  = new dlpack::DLManagedTensor();
     auto* context  = new DlpackContext();
     context->owner = std::move(self);
 
-    std::visit(
-        [&](const auto& mat) {
-            using MatT          = std::decay_t<decltype(mat)>;
-            using T             = typename MatT::element_type::Type;
-            context->shape[0]   = mat->rows();
-            context->shape[1]   = mat->cols();
-            context->strides[0] = 1;
-            context->strides[1] = mat->rows();
+    with_typed_dense_matrix(*context->owner, [&](auto& typed) {
+        using TypedT = std::decay_t<decltype(typed)>;
+        using T      = typename TypedT::MatT::Type;
+        auto& mat    = *typed.matrix;
 
-            int device_id = 0;
-            if (loc == rxmesh::DEVICE) {
-                CUDA_ERROR(cudaGetDevice(&device_id));
-            }
+        context->shape[0]   = mat.rows();
+        context->shape[1]   = mat.cols();
+        context->strides[0] = 1;
+        context->strides[1] = mat.rows();
 
-            managed->dl_tensor.data   = mat->data(loc);
-            managed->dl_tensor.device = {
-                loc == rxmesh::DEVICE ? dlpack::kDLCUDA : dlpack::kDLCPU,
-                device_id};
-            managed->dl_tensor.ndim        = 2;
-            managed->dl_tensor.dtype       = dlpack_dtype<T>();
-            managed->dl_tensor.shape       = context->shape;
-            managed->dl_tensor.strides     = context->strides;
-            managed->dl_tensor.byte_offset = 0;
-        },
-        context->owner->matrix);
+        int device_id = 0;
+        if (loc == rxmesh::DEVICE) {
+            CUDA_ERROR(cudaGetDevice(&device_id));
+        }
+
+        managed->dl_tensor.data   = mat.data(loc);
+        managed->dl_tensor.device = {
+            loc == rxmesh::DEVICE ? dlpack::kDLCUDA : dlpack::kDLCPU,
+            device_id};
+        managed->dl_tensor.ndim        = 2;
+        managed->dl_tensor.dtype       = dlpack_util::dtype_for<T>();
+        managed->dl_tensor.shape       = context->shape;
+        managed->dl_tensor.strides     = context->strides;
+        managed->dl_tensor.byte_offset = 0;
+    });
 
     managed->manager_ctx = context;
-    managed->deleter     = dense_dlpack_managed_tensor_deleter;
+    managed->deleter     = dlpack_util::managed_tensor_deleter<DlpackContext>;
 
-    return py::capsule(managed, "dltensor", dense_dlpack_capsule_destructor);
+    return py::capsule(managed, "dltensor", dlpack_util::capsule_destructor);
 }
 
 inline py::tuple dense_matrix_dlpack_device(const PyDenseMatrix& self)
 {
-    using namespace rxmesh;
-    if (self.is_device_allocated()) {
-        int device_id = 0;
-        CUDA_ERROR(cudaGetDevice(&device_id));
-        return py::make_tuple(static_cast<int>(dlpack::kDLCUDA), device_id);
-    }
-    if (self.is_host_allocated()) {
-        return py::make_tuple(static_cast<int>(dlpack::kDLCPU), 0);
-    }
-    throw std::runtime_error("DenseMatrix has no allocated memory.");
+    return dlpack_util::device_tuple(
+        self.is_device_allocated(), self.is_host_allocated(), "DenseMatrix");
 }
 
 inline py::capsule dense_matrix_dunder_dlpack(
@@ -219,58 +119,23 @@ inline py::capsule dense_matrix_dunder_dlpack(
     return dense_matrix_to_dlpack(std::move(self), loc, std::move(stream));
 }
 
-inline py::object acquire_dlpack_capsule(py::object source)
-{
-    if (PyCapsule_IsValid(source.ptr(), "dltensor")) {
-        return source;
-    }
-    if (!py::hasattr(source, "__dlpack__")) {
-        throw std::invalid_argument(
-            "DenseMatrix.from_dlpack_copy() expects a DLPack capsule or an "
-            "object with __dlpack__().");
-    }
-    if (source_dlpack_device_is_cuda(source)) {
-        py::dict kwargs;
-        kwargs["stream"] = default_cuda_dlpack_stream_arg();
-        return source.attr("__dlpack__")(**kwargs);
-    }
-    return source.attr("__dlpack__")();
-}
-
-inline void mark_dlpack_capsule_consumed(py::object               capsule,
-                                         dlpack::DLManagedTensor* managed)
-{
-    auto* deleter = managed ? managed->deleter : nullptr;
-    PyCapsule_SetName(capsule.ptr(), "used_dltensor");
-    PyCapsule_SetDestructor(capsule.ptr(), nullptr);
-    if (deleter) {
-        deleter(managed);
-    }
-}
-
 template <typename T>
 inline void copy_dlpack_to_dense_matrix_typed(PyDenseMatrix&          output,
                                               const dlpack::DLTensor& tensor,
                                               rxmesh::locationT       location,
                                               int64_t                 stride0,
                                               int64_t                 stride1,
-                                              cudaStream_t            copy_stream)
+                                              cudaStream_t copy_stream)
 {
     using namespace rxmesh;
-    using MatPtr = std::shared_ptr<rxmesh::DenseMatrix<T, Eigen::ColMajor>>;
 
-    if (!std::holds_alternative<MatPtr>(output.matrix)) {
+    auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&output);
+    if (!typed || !typed->matrix) {
         throw std::invalid_argument(
             "DenseMatrix.from_dlpack_copy() internal dtype mismatch.");
     }
 
-    auto& mat_ptr = std::get<MatPtr>(output.matrix);
-    if (!mat_ptr) {
-        throw std::runtime_error(
-            "DenseMatrix.from_dlpack_copy() encountered an empty matrix.");
-    }
-
-    auto& mat = *mat_ptr;
+    auto& mat = *typed->matrix;
     auto* src = reinterpret_cast<const T*>(
         static_cast<const char*>(tensor.data) + tensor.byte_offset);
     if (location == rxmesh::HOST) {
@@ -287,13 +152,12 @@ inline void copy_dlpack_to_dense_matrix_typed(PyDenseMatrix&          output,
             <<<static_cast<int>((n + threads - 1) / threads),
                threads,
                0,
-               copy_stream>>>(
-                mat.data(rxmesh::DEVICE),
-                src,
-                tensor.shape[0],
-                tensor.shape[1],
-                stride0,
-                stride1);
+               copy_stream>>>(mat.data(rxmesh::DEVICE),
+                              src,
+                              tensor.shape[0],
+                              tensor.shape[1],
+                              stride0,
+                              stride1);
         CUDA_ERROR(cudaGetLastError());
         CUDA_ERROR(cudaStreamSynchronize(copy_stream));
     }
@@ -302,9 +166,9 @@ inline void copy_dlpack_to_dense_matrix_typed(PyDenseMatrix&          output,
 inline std::shared_ptr<PyDenseMatrix> dense_matrix_from_dlpack_copy(
     py::object source)
 {
-    py::object capsule = acquire_dlpack_capsule(std::move(source));
-    auto*      managed = static_cast<dlpack::DLManagedTensor*>(
-        PyCapsule_GetPointer(capsule.ptr(), "dltensor"));
+    py::object capsule = dlpack_util::acquire_capsule(
+        std::move(source), "DenseMatrix.from_dlpack_copy()");
+    auto* managed = dlpack_util::extract_managed(capsule);
     if (!managed) {
         PyErr_Clear();
         throw std::invalid_argument(
@@ -335,33 +199,28 @@ inline std::shared_ptr<PyDenseMatrix> dense_matrix_from_dlpack_copy(
                 "tensors.");
         }
 
-        const std::string dtype = dtype_name_from_dlpack(tensor.dtype);
+        const std::string dtype = dlpack_util::dtype_to_name(tensor.dtype);
         const int64_t     stride0 =
             tensor.strides ? tensor.strides[0] : tensor.shape[1];
         const int64_t stride1 = tensor.strides ? tensor.strides[1] : 1;
 
-        auto output =
-            std::make_shared<PyDenseMatrix>(dtype,
-                                            static_cast<int>(tensor.shape[0]),
-                                            static_cast<int>(tensor.shape[1]),
-                                            static_cast<int>(location),
-                                            "col_major");
-        const cudaStream_t copy_stream = nullptr;
-
-        if (dtype == "float32") {
-            copy_dlpack_to_dense_matrix_typed<float>(
-                *output, tensor, location, stride0, stride1, copy_stream);
-        } else if (dtype == "float64") {
-            copy_dlpack_to_dense_matrix_typed<double>(
-                *output, tensor, location, stride0, stride1, copy_stream);
-        } else if (dtype == "int32") {
-            copy_dlpack_to_dense_matrix_typed<int32_t>(
-                *output, tensor, location, stride0, stride1, copy_stream);
-        }
-        mark_dlpack_capsule_consumed(capsule, managed);
+        auto output = dispatch_numeric_dtype_str(
+            dtype, [&](auto tag) -> std::shared_ptr<PyDenseMatrix> {
+                using T  = typename decltype(tag)::type;
+                auto out = make_dense_matrix(static_cast<int>(tensor.shape[0]),
+                                             static_cast<int>(tensor.shape[1]),
+                                             dtype,
+                                             static_cast<int>(location),
+                                             "col_major");
+                const cudaStream_t copy_stream = nullptr;
+                copy_dlpack_to_dense_matrix_typed<T>(
+                    *out, tensor, location, stride0, stride1, copy_stream);
+                return out;
+            });
+        dlpack_util::mark_consumed(capsule, managed);
         return output;
     } catch (...) {
-        mark_dlpack_capsule_consumed(capsule, managed);
+        dlpack_util::mark_consumed(capsule, managed);
         throw;
     }
 }

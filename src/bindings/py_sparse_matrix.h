@@ -1,7 +1,6 @@
 #pragma once
 
 #include "bindings/common.h"
-#include "bindings/dlpack_minimal.h"
 #include "bindings/py_dense_matrix.h"
 
 #include <cstdlib>
@@ -26,20 +25,6 @@ template <typename T>
 inline std::string sparse_dtype_name()
 {
     return dense_dtype_name<T>();
-}
-
-template <typename T>
-inline dlpack::DLDataType sparse_value_dlpack_dtype()
-{
-    if constexpr (std::is_same_v<T, float>) {
-        return {2, 32, 1};
-    } else if constexpr (std::is_same_v<T, double>) {
-        return {2, 64, 1};
-    } else if constexpr (std::is_same_v<T, int32_t>) {
-        return {0, 32, 1};
-    } else {
-        static_assert(always_false<T>::value, "Unsupported sparse dtype");
-    }
 }
 
 template <typename T>
@@ -448,36 +433,24 @@ struct PySparseMatrixT : PySparseMatrix
                 "dtypes.");
         }
 
+        auto& rhs_typed = as_typed_dense<T>(rhs, "SparseMatrix.multiply()");
+
         const int out_rows = transpose_a ? cols() : rows();
         const int out_cols = transpose_b ? rhs.rows() : rhs.cols();
-        auto      output   = std::make_shared<PyDenseMatrix>(
-            dtype(),
-            out_rows,
-            out_cols,
-            static_cast<int>(rxmesh::LOCATION_ALL),
-            "col_major");
+        using DenseMatT    = typename PyDenseMatrixT<T>::MatT;
+        auto out_mat       = std::make_shared<DenseMatT>(
+            out_rows, out_cols, rxmesh::LOCATION_ALL);
+        auto output = std::make_shared<PyDenseMatrixT<T>>(std::move(out_mat),
+                                                          rxmesh::LOCATION_ALL);
+
         const auto cuda_stream = parse_cuda_stream_arg(stream);
-        std::visit(
-            [&](const auto& rhs_mat, const auto& out_mat) {
-                using RhsMatT = std::decay_t<decltype(rhs_mat)>;
-                using OutMatT = std::decay_t<decltype(out_mat)>;
-                if constexpr (
-                    std::is_same_v<T, typename RhsMatT::element_type::Type> &&
-                    std::is_same_v<T, typename OutMatT::element_type::Type>) {
-                    matrix->multiply(*rhs_mat,
-                                     *out_mat,
-                                     transpose_a,
-                                     transpose_b,
-                                     alpha.cast<T>(),
-                                     beta.cast<T>(),
-                                     cuda_stream);
-                } else {
-                    throw std::invalid_argument(
-                        "SparseMatrix.multiply() requires matching dtypes.");
-                }
-            },
-            rhs.matrix,
-            output->matrix);
+        matrix->multiply(*rhs_typed.matrix,
+                         *output->matrix,
+                         transpose_a,
+                         transpose_b,
+                         alpha.cast<T>(),
+                         beta.cast<T>(),
+                         cuda_stream);
         return output;
     }
 
@@ -496,30 +469,17 @@ struct PySparseMatrixT : PySparseMatrix
                 "dense dtypes.");
         }
 
-        auto output = std::make_shared<PyDenseMatrix>(
-            dtype(),
-            rows(),
-            1,
-            static_cast<int>(rxmesh::LOCATION_ALL),
-            "col_major");
+        auto& rhs_typed =
+            as_typed_dense<T>(rhs, "SparseMatrix.multiply_vector()");
+
+        using DenseMatT = typename PyDenseMatrixT<T>::MatT;
+        auto out_mat =
+            std::make_shared<DenseMatT>(rows(), 1, rxmesh::LOCATION_ALL);
+        auto output = std::make_shared<PyDenseMatrixT<T>>(std::move(out_mat),
+                                                          rxmesh::LOCATION_ALL);
+
         const auto cuda_stream = parse_cuda_stream_arg(stream);
-        std::visit(
-            [&](const auto& rhs_mat, const auto& out_mat) {
-                using RhsMatT = std::decay_t<decltype(rhs_mat)>;
-                using OutMatT = std::decay_t<decltype(out_mat)>;
-                if constexpr (
-                    std::is_same_v<T, typename RhsMatT::element_type::Type> &&
-                    std::is_same_v<T, typename OutMatT::element_type::Type>) {
-                    matrix->multiply_cw(*rhs_mat, *out_mat, cuda_stream);
-                } else {
-                    throw std::invalid_argument(
-                        "SparseMatrix.multiply_vector() requires matching "
-                        "dtypes.");
-                }
-            },
-            rhs.matrix,
-            output->matrix);
-                
+        matrix->multiply_cw(*rhs_typed.matrix, *output->matrix, cuda_stream);
         return output;
     }
 

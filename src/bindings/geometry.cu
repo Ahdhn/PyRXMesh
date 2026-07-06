@@ -1,4 +1,5 @@
 #include "bindings/common.h"
+#include "bindings/dispatch.h"
 
 #include "rxmesh/geometry_factory.h"
 
@@ -67,22 +68,11 @@ py::tuple create_plane(uint32_t     nx,
                        py::sequence low_corner,
                        std::string  dtype)
 {
-    const DType parsed_dtype = parse_dtype(dtype);
-    switch (parsed_dtype) {
-        case DType::Float32:
-            return create_plane_typed<float>(nx,
-                                             ny,
-                                             plane,
-                                             static_cast<float>(dx),
-                                             with_cross_diagonal,
-                                             low_corner);
-        case DType::Float64:
-            return create_plane_typed<double>(
-                nx, ny, plane, dx, with_cross_diagonal, low_corner);
-        default:
-            throw std::invalid_argument(
-                "create_plane() supports float32 and float64 coordinates.");
-    }
+    return dispatch_float_dtype_str(dtype, [&](auto tag) {
+        using T = typename decltype(tag)::type;
+        return create_plane_typed<T>(
+            nx, ny, plane, static_cast<T>(dx), with_cross_diagonal, low_corner);
+    });
 }
 
 }  // namespace

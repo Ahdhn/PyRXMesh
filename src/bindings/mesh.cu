@@ -1,3 +1,4 @@
+#include "bindings/plugin_launch.h"
 #include "bindings/py_attribute.h"
 
 namespace pyrxmesh_py {
@@ -11,42 +12,37 @@ std::shared_ptr<rxmesh::RXMeshStatic> rxmesh_static_from_files(
     return std::make_shared<rxmesh::RXMeshStatic>(file_paths, patch_size);
 }
 
-py::array_t<uint64_t> vertex_handles(rxmesh::RXMeshStatic& mesh)
+template <typename HandleT>
+py::array_t<uint64_t> handles(rxmesh::RXMeshStatic& mesh)
 {
-
     py::array_t<uint64_t> out(
-        static_cast<py::ssize_t>(mesh.get_num_vertices()));
+        static_cast<py::ssize_t>(mesh.get_num_elements<HandleT>()));
 
     auto view = out.mutable_unchecked<1>();
 
-    mesh.for_each_vertex(rxmesh::HOST, [&](const rxmesh::VertexHandle h) {
+    mesh.for_each<HandleT>(rxmesh::HOST, [&](const HandleT h) {
         view(mesh.linear_id(h)) = h.unique_id();
     });
     return out;
 }
 
-py::array_t<uint64_t> edge_handles(rxmesh::RXMeshStatic& mesh)
+template <typename HandleT>
+void for_each_handle(rxmesh::RXMeshStatic& mesh, py::function callback)
 {
-    py::array_t<uint64_t> out(static_cast<py::ssize_t>(mesh.get_num_edges()));
-
-    auto view = out.mutable_unchecked<1>();
-
-    mesh.for_each_edge(rxmesh::HOST, [&](const rxmesh::EdgeHandle h) {
-        view(mesh.linear_id(h)) = h.unique_id();
-    });
-    return out;
+    mesh.for_each<HandleT>(
+        rxmesh::HOST, [&](const HandleT h) { callback(h); }, nullptr, false);
 }
 
-py::array_t<uint64_t> face_handles(rxmesh::RXMeshStatic& mesh)
+template <typename HandleT>
+auto global_id_of(const rxmesh::RXMeshStatic& mesh, HandleT h)
 {
-    py::array_t<uint64_t> out(static_cast<py::ssize_t>(mesh.get_num_faces()));
+    return mesh.map_to_global(h);
+}
 
-    auto view = out.mutable_unchecked<1>();
-
-    mesh.for_each_face(rxmesh::HOST, [&](const rxmesh::FaceHandle h) {
-        view(mesh.linear_id(h)) = h.unique_id();
-    });
-    return out;
+template <typename HandleT>
+auto linear_id_of(rxmesh::RXMeshStatic& mesh, HandleT h)
+{
+    return mesh.linear_id(h);
 }
 
 py::array vertices(rxmesh::RXMeshStatic& mesh)
@@ -252,75 +248,20 @@ void register_mesh(py::module_& m)
              py::arg("coords"),
              "Export the mesh to an OBJ file using a vertex coordinate "
              "attribute.")
-        .def("vertex_handles", &vertex_handles)
-        .def("edge_handles", &edge_handles)
-        .def("face_handles", &face_handles)
-        .def(
-            "for_each_vertex",
-            [](RXMeshStatic& mesh, py::function callback) {
-                mesh.for_each_vertex(
-                    HOST,
-                    [&](const VertexHandle h) { callback(h); },
-                    nullptr,
-                    false);
-            },
-            py::arg("callback"))
-        .def(
-            "for_each_edge",
-            [](RXMeshStatic& mesh, py::function callback) {
-                mesh.for_each_edge(
-                    HOST,
-                    [&](const EdgeHandle h) { callback(h); },
-                    nullptr,
-                    false);
-            },
-            py::arg("callback"))
-        .def(
-            "for_each_face",
-            [](RXMeshStatic& mesh, py::function callback) {
-                mesh.for_each_face(
-                    HOST,
-                    [&](const FaceHandle h) { callback(h); },
-                    nullptr,
-                    false);
-            },
-            py::arg("callback"))
-        .def(
-            "global_id",
-            [](const RXMeshStatic& mesh, VertexHandle h) {
-                return mesh.map_to_global(h);
-            },
-            py::arg("handle"))
-        .def(
-            "global_id",
-            [](const RXMeshStatic& mesh, EdgeHandle h) {
-                return mesh.map_to_global(h);
-            },
-            py::arg("handle"))
-        .def(
-            "global_id",
-            [](const RXMeshStatic& mesh, FaceHandle h) {
-                return mesh.map_to_global(h);
-            },
-            py::arg("handle"))
-        .def(
-            "linear_id",
-            [](RXMeshStatic& mesh, const VertexHandle h) {
-                return mesh.linear_id(h);
-            },
-            py::arg("handle"))
-        .def(
-            "linear_id",
-            [](RXMeshStatic& mesh, const EdgeHandle h) {
-                return mesh.linear_id(h);
-            },
-            py::arg("handle"))
-        .def(
-            "linear_id",
-            [](RXMeshStatic& mesh, const FaceHandle h) {
-                return mesh.linear_id(h);
-            },
-            py::arg("handle"))
+        .def("vertex_handles", &handles<VertexHandle>)
+        .def("edge_handles", &handles<EdgeHandle>)
+        .def("face_handles", &handles<FaceHandle>)
+        .def("for_each_vertex",
+             &for_each_handle<VertexHandle>,
+             py::arg("callback"))
+        .def("for_each_edge", &for_each_handle<EdgeHandle>, py::arg("callback"))
+        .def("for_each_face", &for_each_handle<FaceHandle>, py::arg("callback"))
+        .def("global_id", &global_id_of<VertexHandle>, py::arg("handle"))
+        .def("global_id", &global_id_of<EdgeHandle>, py::arg("handle"))
+        .def("global_id", &global_id_of<FaceHandle>, py::arg("handle"))
+        .def("linear_id", &linear_id_of<VertexHandle>, py::arg("handle"))
+        .def("linear_id", &linear_id_of<EdgeHandle>, py::arg("handle"))
+        .def("linear_id", &linear_id_of<FaceHandle>, py::arg("handle"))
         .def("add_vertex_attribute",
              &add_typed_attribute<VertexHandle>,
              py::arg("name"),

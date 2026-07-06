@@ -5,12 +5,7 @@ namespace pyrxmesh_py {
 void register_solvers(py::module_& m)
 {
     py::class_<PyCGSolver, std::shared_ptr<PyCGSolver>>(m, "CGSolver")
-        .def(py::init<std::shared_ptr<PySparseMatrix>,
-                      int,
-                      int,
-                      py::object,
-                      py::object,
-                      int>(),
+        .def(py::init(&make_iterative_solver<rxmesh::CGSolver>),
              py::arg("matrix"),
              py::arg("unknown_dim")         = 1,
              py::arg("max_iter")            = 1000,
@@ -37,12 +32,7 @@ void register_solvers(py::module_& m)
              py::arg("pre_solve")     = true);
 
     py::class_<PyPCGSolver, std::shared_ptr<PyPCGSolver>>(m, "PCGSolver")
-        .def(py::init<std::shared_ptr<PySparseMatrix>,
-                      int,
-                      int,
-                      py::object,
-                      py::object,
-                      int>(),
+        .def(py::init(&make_iterative_solver<rxmesh::PCGSolver>),
              py::arg("matrix"),
              py::arg("unknown_dim")         = 1,
              py::arg("max_iter")            = 1000,
@@ -70,7 +60,8 @@ void register_solvers(py::module_& m)
 
     py::class_<PyCholeskySolver, std::shared_ptr<PyCholeskySolver>>(
         m, "CholeskySolver")
-        .def(py::init<std::shared_ptr<PySparseMatrix>, std::string>(),
+        .def(py::init(&make_direct_solver<rxmesh::CholeskySolver,
+                                          DirectSolverKind::Cholesky>),
              py::arg("matrix"),
              py::arg("permute") = "none")
         .def_property_readonly("name", &PyCholeskySolver::name)
@@ -90,7 +81,8 @@ void register_solvers(py::module_& m)
              py::arg("pre_solve")     = false);
 
     py::class_<PyQRSolver, std::shared_ptr<PyQRSolver>>(m, "QRSolver")
-        .def(py::init<std::shared_ptr<PySparseMatrix>, std::string>(),
+        .def(py::init(
+                 &make_direct_solver<rxmesh::QRSolver, DirectSolverKind::QR>),
              py::arg("matrix"),
              py::arg("permute") = "none")
         .def_property_readonly("name", &PyQRSolver::name)
@@ -109,7 +101,8 @@ void register_solvers(py::module_& m)
              py::arg("pre_solve")     = false);
 
     py::class_<PyLUSolver, std::shared_ptr<PyLUSolver>>(m, "LUSolver")
-        .def(py::init<std::shared_ptr<PySparseMatrix>, std::string>(),
+        .def(py::init(
+                 &make_direct_solver<rxmesh::LUSolver, DirectSolverKind::LU>),
              py::arg("matrix"),
              py::arg("permute") = "none")
         .def_property_readonly("name", &PyLUSolver::name)
@@ -138,7 +131,8 @@ void register_solvers(py::module_& m)
 #ifdef USE_CUDSS
     py::class_<PycuDSSCholeskySolver, std::shared_ptr<PycuDSSCholeskySolver>>(
         m, "cuDSSCholeskySolver")
-        .def(py::init<std::shared_ptr<PySparseMatrix>, std::string>(),
+        .def(py::init(&make_cudss_solver<rxmesh::cuDSSCholeskySolver,
+                                         DirectSolverKind::cuDSSCholesky>),
              py::arg("matrix"),
              py::arg("permute") = "none")
         .def_property_readonly("name", &PycuDSSCholeskySolver::name)

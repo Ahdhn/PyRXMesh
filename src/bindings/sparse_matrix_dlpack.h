@@ -1,6 +1,8 @@
 #pragma once
 
+#include "bindings/dispatch.h"
 #include "bindings/dlpack_minimal.h"
+#include "bindings/dlpack_utils.h"
 #include "bindings/py_sparse_matrix.h"
 
 #include <cuda_runtime_api.h>
@@ -14,86 +16,6 @@ struct SparseDlpackContext
     int64_t                         shape[1]   = {0};
     int64_t                         strides[1] = {1};
 };
-
-inline bool sparse_is_cuda_dlpack_no_sync_stream(py::object stream)
-{
-    return !stream.is_none() && cuda_stream_arg_value(std::move(stream)) == -1;
-}
-
-inline py::object sparse_default_cuda_dlpack_stream_arg()
-{
-    return py::int_(1);
-}
-
-inline bool sparse_source_dlpack_device_is_cuda(py::object source)
-{
-    if (!py::hasattr(source, "__dlpack_device__")) {
-        return false;
-    }
-    py::tuple device = source.attr("__dlpack_device__")().cast<py::tuple>();
-    if (py::len(device) < 1) {
-        return false;
-    }
-    return device[0].cast<int>() == static_cast<int>(dlpack::kDLCUDA);
-}
-
-inline py::object sparse_acquire_dlpack_capsule(py::object source,
-                                                py::object stream)
-{
-    if (PyCapsule_IsValid(source.ptr(), "dltensor")) {
-        return source;
-    }
-    if (!py::hasattr(source, "__dlpack__")) {
-        throw std::invalid_argument(
-            "SparseMatrix.from_dlpack_copy() expects a DLPack capsule or an "
-            "object with __dlpack__().");
-    }
-    if (sparse_source_dlpack_device_is_cuda(source)) {
-        py::dict kwargs;
-        kwargs["stream"] =
-            stream.is_none() ? sparse_default_cuda_dlpack_stream_arg() : stream;
-        return source.attr("__dlpack__")(**kwargs);
-    }
-    return source.attr("__dlpack__")();
-}
-
-inline bool sparse_dlpack_dtype_equal(dlpack::DLDataType a,
-                                      dlpack::DLDataType b)
-{
-    return a.code == b.code && a.bits == b.bits && a.lanes == b.lanes;
-}
-
-inline void sparse_synchronize_dlpack_export_stream(py::object stream)
-{
-    using namespace rxmesh;
-    if (sparse_is_cuda_dlpack_no_sync_stream(stream)) {
-        return;
-    }
-
-    cudaStream_t consumer_stream = parse_cuda_stream_arg(std::move(stream));
-    if (consumer_stream == nullptr) {
-        CUDA_ERROR(cudaStreamSynchronize(nullptr));
-        return;
-    }
-
-    cudaEvent_t event = nullptr;
-    CUDA_ERROR(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));
-    CUDA_ERROR(cudaEventRecord(event, nullptr));
-    CUDA_ERROR(cudaStreamWaitEvent(consumer_stream, event, 0));
-    CUDA_ERROR(cudaEventDestroy(event));
-}
-
-inline void sparse_mark_dlpack_capsule_consumed(
-    py::object               capsule,
-    dlpack::DLManagedTensor* managed)
-{
-    auto* deleter = managed ? managed->deleter : nullptr;
-    PyCapsule_SetName(capsule.ptr(), "used_dltensor");
-    PyCapsule_SetDestructor(capsule.ptr(), nullptr);
-    if (deleter) {
-        deleter(managed);
-    }
-}
 
 template <typename T>
 __global__ void sparse_copy_strided_1d_kernel(T*       dst,
@@ -270,27 +192,6 @@ inline std::shared_ptr<PySparseMatrix> sparse_matrix_from_host_csr_vectors(
                                                 rxmesh::LOCATION_ALL);
 }
 
-inline void sparse_dlpack_capsule_destructor(PyObject* capsule)
-{
-    if (PyCapsule_IsValid(capsule, "used_dltensor")) {
-        return;
-    }
-    if (!PyCapsule_IsValid(capsule, "dltensor")) {
-        return;
-    }
-    auto* managed = static_cast<dlpack::DLManagedTensor*>(
-        PyCapsule_GetPointer(capsule, "dltensor"));
-    if (managed && managed->deleter) {
-        managed->deleter(managed);
-    }
-}
-
-inline void sparse_dlpack_managed_tensor_deleter(dlpack::DLManagedTensor* self)
-{
-    delete static_cast<SparseDlpackContext*>(self->manager_ctx);
-    delete self;
-}
-
 template <typename T>
 inline bool fill_sparse_component_dlpack(std::shared_ptr<PySparseMatrix>& owner,
                                          dlpack::DLManagedTensor* managed,
@@ -309,21 +210,21 @@ inline bool fill_sparse_component_dlpack(std::shared_ptr<PySparseMatrix>& owner,
         context->shape[0]        = matrix.rows() + 1;
         context->strides[0]      = 1;
         managed->dl_tensor.data  = matrix.row_ptr(location);
-        managed->dl_tensor.dtype = sparse_value_dlpack_dtype<IndexT>();
+        managed->dl_tensor.dtype = dlpack_util::dtype_for<IndexT>();
         return true;
     }
     if (component == CsrComponent::ColIdx) {
         context->shape[0]        = matrix.non_zeros();
         context->strides[0]      = 1;
         managed->dl_tensor.data  = matrix.col_idx(location);
-        managed->dl_tensor.dtype = sparse_value_dlpack_dtype<IndexT>();
+        managed->dl_tensor.dtype = dlpack_util::dtype_for<IndexT>();
         return true;
     }
 
     context->shape[0]        = matrix.non_zeros();
     context->strides[0]      = 1;
     managed->dl_tensor.data  = matrix.val_ptr(location);
-    managed->dl_tensor.dtype = sparse_value_dlpack_dtype<T>();
+    managed->dl_tensor.dtype = dlpack_util::dtype_for<T>();
     return true;
 }
 
@@ -348,7 +249,7 @@ inline py::capsule sparse_component_to_dlpack(
         self->ensure_host_readable();
     } else {
         self->ensure_device_readable();
-        sparse_synchronize_dlpack_export_stream(std::move(stream));
+        dlpack_util::synchronize_export_stream(std::move(stream));
     }
 
     auto* managed  = new dlpack::DLManagedTensor();
@@ -376,9 +277,9 @@ inline py::capsule sparse_component_to_dlpack(
     managed->dl_tensor.strides     = context->strides;
     managed->dl_tensor.byte_offset = 0;
     managed->manager_ctx           = context;
-    managed->deleter               = sparse_dlpack_managed_tensor_deleter;
+    managed->deleter = dlpack_util::managed_tensor_deleter<SparseDlpackContext>;
 
-    return py::capsule(managed, "dltensor", sparse_dlpack_capsule_destructor);
+    return py::capsule(managed, "dltensor", dlpack_util::capsule_destructor);
 }
 
 template <typename T>
@@ -388,8 +289,7 @@ inline void sparse_values_from_dlpack_copy_typed(PySparseMatrix&         self,
                                                  py::object              stream)
 {
     const auto copy_stream = parse_cuda_stream_arg(stream);
-    if (!sparse_dlpack_dtype_equal(tensor.dtype,
-                                   sparse_value_dlpack_dtype<T>())) {
+    if (!dlpack_util::dtype_equal(tensor.dtype, dlpack_util::dtype_for<T>())) {
         throw std::invalid_argument(
             "SparseMatrix.from_dlpack_values_copy() values dtype does not "
             "match the SparseMatrix dtype.");
@@ -426,10 +326,9 @@ inline void sparse_values_from_dlpack_copy(PySparseMatrix& self,
                                            int             target,
                                            py::object      stream)
 {
-    py::object capsule =
-        sparse_acquire_dlpack_capsule(std::move(source), stream);
-    auto* managed = static_cast<dlpack::DLManagedTensor*>(
-        PyCapsule_GetPointer(capsule.ptr(), "dltensor"));
+    py::object capsule = dlpack_util::acquire_capsule(
+        std::move(source), stream, "SparseMatrix.from_dlpack_copy()");
+    auto* managed = dlpack_util::extract_managed(capsule);
     if (!managed) {
         PyErr_Clear();
         throw std::invalid_argument(
@@ -440,19 +339,13 @@ inline void sparse_values_from_dlpack_copy(PySparseMatrix& self,
     try {
         const auto  dst    = parse_location(target);
         const auto& tensor = managed->dl_tensor;
-        if (self.dtype() == "float32") {
-            sparse_values_from_dlpack_copy_typed<float>(
-                self, tensor, dst, stream);
-        } else if (self.dtype() == "float64") {
-            sparse_values_from_dlpack_copy_typed<double>(
-                self, tensor, dst, stream);
-        } else if (self.dtype() == "int32") {
-            sparse_values_from_dlpack_copy_typed<int32_t>(
-                self, tensor, dst, stream);
-        }
-        sparse_mark_dlpack_capsule_consumed(capsule, managed);
+        dispatch_numeric_dtype_str(self.dtype(), [&](auto tag) {
+            using T = typename decltype(tag)::type;
+            sparse_values_from_dlpack_copy_typed<T>(self, tensor, dst, stream);
+        });
+        dlpack_util::mark_consumed(capsule, managed);
     } catch (...) {
-        sparse_mark_dlpack_capsule_consumed(capsule, managed);
+        dlpack_util::mark_consumed(capsule, managed);
         throw;
     }
 }
@@ -474,16 +367,16 @@ inline std::shared_ptr<PySparseMatrix> sparse_matrix_from_dlpack_copy_typed(
     }
     const int rows = shape[0].cast<int>();
     const int cols = shape[1].cast<int>();
-    if (!sparse_dlpack_dtype_equal(row_ptr_tensor.dtype,
-                                   sparse_value_dlpack_dtype<IndexT>()) ||
-        !sparse_dlpack_dtype_equal(col_idx_tensor.dtype,
-                                   sparse_value_dlpack_dtype<IndexT>())) {
+    if (!dlpack_util::dtype_equal(row_ptr_tensor.dtype,
+                                  dlpack_util::dtype_for<IndexT>()) ||
+        !dlpack_util::dtype_equal(col_idx_tensor.dtype,
+                                  dlpack_util::dtype_for<IndexT>())) {
         throw std::invalid_argument(
             "SparseMatrix.from_dlpack_copy() row_ptr and col_idx must use the "
             "SparseMatrix index dtype.");
     }
-    if (!sparse_dlpack_dtype_equal(values_tensor.dtype,
-                                   sparse_value_dlpack_dtype<T>())) {
+    if (!dlpack_util::dtype_equal(values_tensor.dtype,
+                                  dlpack_util::dtype_for<T>())) {
         throw std::invalid_argument(
             "SparseMatrix.from_dlpack_copy() values dtype does not match the "
             "requested SparseMatrix dtype.");
@@ -530,12 +423,12 @@ inline std::shared_ptr<PySparseMatrix> sparse_matrix_from_dlpack_copy(
     py::object  stream)
 {
     const auto copy_stream = parse_cuda_stream_arg(stream);
-    py::object row_capsule =
-        sparse_acquire_dlpack_capsule(std::move(row_ptr), stream);
-    py::object col_capsule =
-        sparse_acquire_dlpack_capsule(std::move(col_idx), stream);
-    py::object val_capsule =
-        sparse_acquire_dlpack_capsule(std::move(values), stream);
+    py::object row_capsule = dlpack_util::acquire_capsule(
+        std::move(row_ptr), stream, "SparseMatrix.from_dlpack_copy()");
+    py::object col_capsule = dlpack_util::acquire_capsule(
+        std::move(col_idx), stream, "SparseMatrix.from_dlpack_copy()");
+    py::object val_capsule = dlpack_util::acquire_capsule(
+        std::move(values), stream, "SparseMatrix.from_dlpack_copy()");
 
     dlpack::DLManagedTensor* row_managed = nullptr;
     dlpack::DLManagedTensor* col_managed = nullptr;
@@ -543,23 +436,20 @@ inline std::shared_ptr<PySparseMatrix> sparse_matrix_from_dlpack_copy(
 
     auto consume = [&]() {
         if (row_managed) {
-            sparse_mark_dlpack_capsule_consumed(row_capsule, row_managed);
+            dlpack_util::mark_consumed(row_capsule, row_managed);
         }
         if (col_managed) {
-            sparse_mark_dlpack_capsule_consumed(col_capsule, col_managed);
+            dlpack_util::mark_consumed(col_capsule, col_managed);
         }
         if (val_managed) {
-            sparse_mark_dlpack_capsule_consumed(val_capsule, val_managed);
+            dlpack_util::mark_consumed(val_capsule, val_managed);
         }
     };
 
     try {
-        row_managed = static_cast<dlpack::DLManagedTensor*>(
-            PyCapsule_GetPointer(row_capsule.ptr(), "dltensor"));
-        col_managed = static_cast<dlpack::DLManagedTensor*>(
-            PyCapsule_GetPointer(col_capsule.ptr(), "dltensor"));
-        val_managed = static_cast<dlpack::DLManagedTensor*>(
-            PyCapsule_GetPointer(val_capsule.ptr(), "dltensor"));
+        row_managed = dlpack_util::extract_managed(row_capsule);
+        col_managed = dlpack_util::extract_managed(col_capsule);
+        val_managed = dlpack_util::extract_managed(val_capsule);
         if (!row_managed || !col_managed || !val_managed) {
             PyErr_Clear();
             throw std::invalid_argument(
@@ -568,51 +458,30 @@ inline std::shared_ptr<PySparseMatrix> sparse_matrix_from_dlpack_copy(
         }
 
         if (dtype.empty()) {
-            if (sparse_dlpack_dtype_equal(val_managed->dl_tensor.dtype,
-                                          sparse_value_dlpack_dtype<float>())) {
+            if (dlpack_util::dtype_equal(val_managed->dl_tensor.dtype,
+                                         dlpack_util::dtype_for<float>())) {
                 dtype = "float32";
-            } else if (sparse_dlpack_dtype_equal(
+            } else if (dlpack_util::dtype_equal(
                            val_managed->dl_tensor.dtype,
-                           sparse_value_dlpack_dtype<double>())) {
+                           dlpack_util::dtype_for<double>())) {
                 dtype = "float64";
-            } else if (sparse_dlpack_dtype_equal(
+            } else if (dlpack_util::dtype_equal(
                            val_managed->dl_tensor.dtype,
-                           sparse_value_dlpack_dtype<int32_t>())) {
+                           dlpack_util::dtype_for<int32_t>())) {
                 dtype = "int32";
             }
         }
 
-        std::shared_ptr<PySparseMatrix> result;
-        switch (parse_dtype(dtype)) {
-            case DType::Float32:
-                result = sparse_matrix_from_dlpack_copy_typed<float>(
+        auto result = dispatch_numeric_dtype_str(
+            dtype, [&](auto tag) -> std::shared_ptr<PySparseMatrix> {
+                using T = typename decltype(tag)::type;
+                return sparse_matrix_from_dlpack_copy_typed<T>(
                     row_managed->dl_tensor,
                     col_managed->dl_tensor,
                     val_managed->dl_tensor,
                     shape,
                     copy_stream);
-                break;
-            case DType::Float64:
-                result = sparse_matrix_from_dlpack_copy_typed<double>(
-                    row_managed->dl_tensor,
-                    col_managed->dl_tensor,
-                    val_managed->dl_tensor,
-                    shape,
-                    copy_stream);
-                break;
-            case DType::Int32:
-                result = sparse_matrix_from_dlpack_copy_typed<int32_t>(
-                    row_managed->dl_tensor,
-                    col_managed->dl_tensor,
-                    val_managed->dl_tensor,
-                    shape,
-                    copy_stream);
-                break;
-            default:
-                throw std::invalid_argument(
-                    "SparseMatrix.from_dlpack_copy() supports float32, "
-                    "float64, and int32 values.");
-        }
+            });
         consume();
         return result;
     } catch (...) {

@@ -3,32 +3,6 @@
 
 namespace pyrxmesh_py {
 
-namespace {
-
-std::shared_ptr<PyDenseMatrix> make_dense_matrix(int         rows,
-                                                 int         cols,
-                                                 std::string dtype,
-                                                 int         location,
-                                                 std::string order)
-{
-    return std::make_shared<PyDenseMatrix>(
-        dtype, rows, cols, location, std::move(order));
-}
-
-std::shared_ptr<PyDenseMatrix> make_dense_matrix_for_mesh(
-    std::shared_ptr<rxmesh::RXMeshStatic> mesh,
-    int                                   rows,
-    int                                   cols,
-    std::string                           dtype,
-    int                                   location,
-    std::string                           order)
-{
-    return std::make_shared<PyDenseMatrix>(
-        std::move(mesh), dtype, rows, cols, location, std::move(order));
-}
-
-}  // namespace
-
 void register_dense_matrix(py::module_& m)
 {
     py::class_<PyDenseMatrix, std::shared_ptr<PyDenseMatrix>>(m, "DenseMatrix")

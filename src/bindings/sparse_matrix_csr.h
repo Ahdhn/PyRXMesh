@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bindings/dispatch.h"
 #include "bindings/py_sparse_matrix.h"
 
 #include <numeric>
@@ -130,21 +131,12 @@ inline std::shared_ptr<PySparseMatrix> sparse_matrix_from_numpy_copy(
     py::tuple   shape,
     std::string dtype)
 {
-    switch (parse_dtype(dtype)) {
-        case DType::Float32:
-            return sparse_matrix_from_csr_typed<float>(
+    return dispatch_numeric_dtype_str(
+        dtype, [&](auto tag) -> std::shared_ptr<PySparseMatrix> {
+            using T = typename decltype(tag)::type;
+            return sparse_matrix_from_csr_typed<T>(
                 row_ptr, col_idx, values, shape);
-        case DType::Float64:
-            return sparse_matrix_from_csr_typed<double>(
-                row_ptr, col_idx, values, shape);
-        case DType::Int32:
-            return sparse_matrix_from_csr_typed<int32_t>(
-                row_ptr, col_idx, values, shape);
-        default:
-            throw std::invalid_argument(
-                "SparseMatrix.from_numpy_copy() supports float32, float64, "
-                "and int32 values.");
-    }
+        });
 }
 
 }  // namespace pyrxmesh_py

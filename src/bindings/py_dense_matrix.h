@@ -1,226 +1,194 @@
 #pragma once
 
 #include "bindings/common.h"
+#include "bindings/dispatch.h"
 
 namespace pyrxmesh_py {
 
-using DenseMatrixVariant = std::variant<
-    std::shared_ptr<rxmesh::DenseMatrix<float, Eigen::ColMajor>>,
-    std::shared_ptr<rxmesh::DenseMatrix<double, Eigen::ColMajor>>,
-    std::shared_ptr<rxmesh::DenseMatrix<int32_t, Eigen::ColMajor>>>;
+// Forward decl of the typed implementation so factory helpers can construct
+// it from per-T context (DLPack copy, sparse multiply output, attribute
+// to_matrix_copy, dense view creation, etc.)
+template <typename T>
+struct PyDenseMatrixT;
 
+
+// -----------------------------------------------------------------------------
+// PyDenseMatrix — non-templated polymorphic base.
+//
+// Mirrors the PySparseMatrix / PyAttributeBase pattern: dtype dispatch happens
+// at construction time (factory picks PyDenseMatrixT<T>), and all subsequent
+// operations go through virtual methods on the base. Binary operations
+// resolve their other operand via dynamic_cast<PyDenseMatrixT<T>*>.
+// -----------------------------------------------------------------------------
 struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 {
-    PyDenseMatrix(std::string dtype,
-                  int         rows,
-                  int         cols,
-                  int         location,
-                  std::string order)
-        : allocated(parse_location(location))
-    {
-        if (rows <= 0 || cols <= 0) {
-            throw std::invalid_argument(
-                "DenseMatrix rows and cols must be positive.");
-        }
-        if (order != "col_major" && order != "column_major" && order != "F") {
-            throw std::invalid_argument(
-                "DenseMatrix currently supports only col_major order.");
-        }
-
-        const DType parsed_dtype = parse_dtype(dtype);
-        const auto  loc          = parse_location(location);
-        switch (parsed_dtype) {
-            case DType::Float32:
-                matrix = std::make_shared<
-                    rxmesh::DenseMatrix<float, Eigen::ColMajor>>(
-                    rows, cols, loc);
-                break;
-            case DType::Float64:
-                matrix = std::make_shared<
-                    rxmesh::DenseMatrix<double, Eigen::ColMajor>>(
-                    rows, cols, loc);
-                break;
-            case DType::Int32:
-                matrix = std::make_shared<
-                    rxmesh::DenseMatrix<int32_t, Eigen::ColMajor>>(
-                    rows, cols, loc);
-                break;
-            default:
-                throw std::invalid_argument(
-                    "DenseMatrix supports float32, float64, and int32.");
-        }
-    }
-
-    PyDenseMatrix(std::shared_ptr<rxmesh::RXMeshStatic> mesh,
-                  std::string                           dtype,
-                  int                                   rows,
-                  int                                   cols,
-                  int                                   location,
-                  std::string                           order)
-        : allocated(parse_location(location))
-    {
-        if (!mesh) {
-            throw std::invalid_argument(
-                "DenseMatrix mesh-aware constructor requires a mesh.");
-        }
-        if (rows <= 0 || cols <= 0) {
-            throw std::invalid_argument(
-                "DenseMatrix rows and cols must be positive.");
-        }
-        if (order != "col_major" && order != "column_major" && order != "F") {
-            throw std::invalid_argument(
-                "DenseMatrix currently supports only col_major order.");
-        }
-
-        const DType parsed_dtype = parse_dtype(dtype);
-        const auto  loc          = parse_location(location);
-        switch (parsed_dtype) {
-            case DType::Float32:
-                matrix = std::make_shared<
-                    rxmesh::DenseMatrix<float, Eigen::ColMajor>>(
-                    *mesh, rows, cols, loc);
-                break;
-            case DType::Float64:
-                matrix = std::make_shared<
-                    rxmesh::DenseMatrix<double, Eigen::ColMajor>>(
-                    *mesh, rows, cols, loc);
-                break;
-            case DType::Int32:
-                matrix = std::make_shared<
-                    rxmesh::DenseMatrix<int32_t, Eigen::ColMajor>>(
-                    *mesh, rows, cols, loc);
-                break;
-            default:
-                throw std::invalid_argument(
-                    "DenseMatrix supports float32, float64, and int32.");
-        }
-    }
-
-    explicit PyDenseMatrix(DenseMatrixVariant mat, rxmesh::locationT location)
-        : allocated(location), matrix(std::move(mat))
-    {
-    }
-
-    ~PyDenseMatrix()
-    {
-        std::visit([](const auto& mat) { mat->release(rxmesh::LOCATION_ALL); },
-                   matrix);
-    }
-
-    rxmesh::locationT              allocated;
-    DenseMatrixVariant             matrix;
+    rxmesh::locationT              allocated = rxmesh::LOCATION_NONE;
     std::shared_ptr<PyDenseMatrix> base_owner;
 
-    int rows() const
-    {
-        return std::visit([](const auto& mat) { return mat->rows(); }, matrix);
-    }
+    virtual ~PyDenseMatrix() = default;
 
-    int cols() const
-    {
-        return std::visit([](const auto& mat) { return mat->cols(); }, matrix);
-    }
+    // Metadata
+    virtual int         rows() const  = 0;
+    virtual int         cols() const  = 0;
+    virtual int         bytes() const = 0;
+    virtual std::string dtype() const = 0;
 
+    // Shared (non-virtual) helpers
     py::tuple shape() const
     {
         return py::make_tuple(rows(), cols());
     }
-
-    std::string dtype() const
-    {
-        return std::visit(
-            [](const auto& mat) {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                return std::string(dense_dtype_name<T>());
-            },
-            matrix);
-    }
-
     std::string order() const
     {
         return "col_major";
     }
-
     int location() const
     {
         return static_cast<int>(allocated);
     }
-
     bool is_host_allocated() const
     {
         return (allocated & rxmesh::HOST) == rxmesh::HOST;
     }
-
     bool is_device_allocated() const
     {
         return (allocated & rxmesh::DEVICE) == rxmesh::DEVICE;
     }
 
-    int bytes() const
+    // Allocation lifecycle
+    virtual void move(rxmesh::locationT source,
+                      rxmesh::locationT target,
+                      cudaStream_t      stream) = 0;
+    virtual void release(int location)     = 0;
+
+    // Value ops
+    virtual void reset(py::object value, int location, cudaStream_t stream) = 0;
+    virtual void fill_random(double low, double high)                       = 0;
+    virtual py::object value(py::object row_or_handle, int col)             = 0;
+    virtual void       set_value(py::object row_or_handle,
+                                 int        col,
+                                 py::object value)                          = 0;
+
+    // NumPy
+    virtual py::array to_numpy(int location)               = 0;
+    virtual py::array to_numpy_copy(int source)            = 0;
+    virtual void      from_numpy_copy(py::array    values,
+                                      int          target,
+                                      cudaStream_t stream) = 0;
+    virtual void      copy_from(PyDenseMatrix& other,
+                                int            source,
+                                int            target,
+                                cudaStream_t   stream)       = 0;
+
+    // BLAS-like
+    virtual py::object norm2(cudaStream_t stream)                       = 0;
+    virtual py::object abs_sum(cudaStream_t stream)                     = 0;
+    virtual py::object abs_max(cudaStream_t stream)                     = 0;
+    virtual py::object abs_min(cudaStream_t stream)                     = 0;
+    virtual py::object dot(PyDenseMatrix& other, cudaStream_t stream)   = 0;
+    virtual void       axpy(PyDenseMatrix& x,
+                            py::object     alpha,
+                            cudaStream_t   stream)                        = 0;
+    virtual void       multiply(py::object scalar, cudaStream_t stream) = 0;
+    virtual void       swap(PyDenseMatrix& other, cudaStream_t stream)  = 0;
+
+    // Shape / view operations
+    virtual void                           reshape(int rows, int cols)   = 0;
+    virtual std::shared_ptr<PyDenseMatrix> col(int column)               = 0;
+    virtual std::shared_ptr<PyDenseMatrix> segment(int start, int count) = 0;
+
+    // File I/O
+    virtual void to_mtx(const std::string& file_name) = 0;
+};
+
+
+// -----------------------------------------------------------------------------
+// PyDenseMatrixT<T> — typed implementation. T must be float, double, or
+// int32_t.
+// -----------------------------------------------------------------------------
+template <typename T>
+struct PyDenseMatrixT final : PyDenseMatrix
+{
+    using MatT = rxmesh::DenseMatrix<T, Eigen::ColMajor>;
+
+    std::shared_ptr<MatT> matrix;
+
+    PyDenseMatrixT() = default;
+
+    PyDenseMatrixT(std::shared_ptr<MatT> in_matrix, rxmesh::locationT location)
     {
-        return std::visit([](const auto& mat) { return mat->bytes(); }, matrix);
+        matrix    = std::move(in_matrix);
+        allocated = location;
     }
 
+    ~PyDenseMatrixT() override
+    {
+        if (matrix) {
+            matrix->release(rxmesh::LOCATION_ALL);
+        }
+    }
+
+    // Metadata
+    int rows() const override
+    {
+        return matrix->rows();
+    }
+    int cols() const override
+    {
+        return matrix->cols();
+    }
+    int bytes() const override
+    {
+        return matrix->bytes();
+    }
+    std::string dtype() const override
+    {
+        return std::string(dense_dtype_name<T>());
+    }
+
+    // Allocation
     void move(rxmesh::locationT source,
               rxmesh::locationT target,
-              cudaStream_t      stream = nullptr)
+              cudaStream_t      stream) override
     {
-        std::visit([&](const auto& mat) { mat->move(source, target, stream); },
-                   matrix);
+        matrix->move(source, target, stream);
         allocated = static_cast<rxmesh::locationT>(static_cast<int>(allocated) |
                                                    static_cast<int>(target));
     }
 
-    void release(int location)
+    void release(int location) override
     {
         const auto loc = parse_location(location);
-        std::visit([&](const auto& mat) { mat->release(loc); }, matrix);
+        matrix->release(loc);
         allocated = static_cast<rxmesh::locationT>(static_cast<int>(allocated) &
                                                    (~static_cast<int>(loc)));
     }
 
-    void reset(py::object value, int location, cudaStream_t stream = nullptr)
+    // Value ops
+    void reset(py::object value, int location, cudaStream_t stream) override
     {
-        const auto loc = parse_location(location);
-        std::visit(
-            [&](const auto& mat) {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                mat->reset(value.cast<T>(), loc, stream);
-            },
-            matrix);
+        matrix->reset(value.cast<T>(), parse_location(location), stream);
     }
 
-    void fill_random(double low, double high)
+    void fill_random(double low, double high) override
     {
-        std::visit([&](const auto& mat) { mat->fill_random(low, high); },
-                   matrix);
+        matrix->fill_random(low, high);
     }
 
-    py::object value(py::object row_or_handle, int col)
+    py::object value(py::object row_or_handle, int col) override
     {
-        return std::visit(
-            [&](const auto& mat) -> py::object {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                return py::cast(read_value<T>(*mat, row_or_handle, col));
-            },
-            matrix);
+        return py::cast(read_value(row_or_handle, col));
     }
 
-    void set_value(py::object row_or_handle, int col, py::object value)
+    void set_value(py::object row_or_handle,
+                   int        col,
+                   py::object value_obj) override
     {
-        std::visit(
-            [&](const auto& mat) {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                write_value<T>(*mat, row_or_handle, col, value.cast<T>());
-            },
-            matrix);
+        write_value(row_or_handle, col, value_obj.cast<T>());
     }
 
-    py::array to_numpy(int location)
+    // NumPy
+    py::array to_numpy(int location) override
     {
         const auto loc = parse_location(location);
         if (loc != rxmesh::HOST) {
@@ -233,76 +201,54 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
                 "Move or create the matrix on HOST, or use "
                 "DenseMatrix.to_numpy_copy().");
         }
-
-        return std::visit(
-            [&](const auto& mat) -> py::array {
-                using MatT      = std::decay_t<decltype(mat)>;
-                using T         = typename MatT::element_type::Type;
-                const int r     = mat->rows();
-                const int c     = mat->cols();
-                auto      owner = shared_from_this();
-                return py::array_t<T>({r, c},
-                                      {static_cast<py::ssize_t>(sizeof(T)),
-                                       static_cast<py::ssize_t>(sizeof(T) * r)},
-                                      mat->data(rxmesh::HOST),
-                                      py::cast(owner));
-            },
-            matrix);
+        const int r     = matrix->rows();
+        const int c     = matrix->cols();
+        auto      owner = shared_from_this();
+        return py::array_t<T>({r, c},
+                              {static_cast<py::ssize_t>(sizeof(T)),
+                               static_cast<py::ssize_t>(sizeof(T) * r)},
+                              matrix->data(rxmesh::HOST),
+                              py::cast(owner));
     }
 
-    py::array to_numpy_copy(int source)
+    py::array to_numpy_copy(int source) override
     {
         const auto src = parse_location(source);
         if (src != rxmesh::HOST) {
             throw std::invalid_argument(
                 "DenseMatrix.to_numpy_copy() only supports Location.HOST.");
         }
-
-        return std::visit(
-            [&](const auto& mat) -> py::array {
-                using MatT       = std::decay_t<decltype(mat)>;
-                using T          = typename MatT::element_type::Type;
-                const int      r = mat->rows();
-                const int      c = mat->cols();
-                py::array_t<T> out({r, c});
-                auto           view = out.template mutable_unchecked<2>();
-                for (int j = 0; j < c; ++j) {
-                    for (int i = 0; i < r; ++i) {
-                        view(i, j) = (*mat)(i, j);
-                    }
-                }
-                return out;
-            },
-            matrix);
+        const int      r = matrix->rows();
+        const int      c = matrix->cols();
+        py::array_t<T> out({r, c});
+        auto           view = out.template mutable_unchecked<2>();
+        for (int j = 0; j < c; ++j) {
+            for (int i = 0; i < r; ++i) {
+                view(i, j) = (*matrix)(i, j);
+            }
+        }
+        return out;
     }
 
     void from_numpy_copy(py::array    values,
                          int          target,
-                         cudaStream_t stream = nullptr)
+                         cudaStream_t stream) override
     {
         const auto dst = parse_location(target);
 
-        std::visit(
-            [&](const auto& mat) {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                py::array_t<T, py::array::c_style | py::array::forcecast> typed(
-                    values);
-                const py::buffer_info info = typed.request();
-                if (info.ndim != 2 || info.shape[0] != mat->rows() ||
-                    info.shape[1] != mat->cols()) {
-                    throw std::invalid_argument(
-                        "DenseMatrix.from_numpy_copy() shape must match "
-                        "matrix.shape.");
-                }
-                auto view = typed.template unchecked<2>();
-                for (int j = 0; j < mat->cols(); ++j) {
-                    for (int i = 0; i < mat->rows(); ++i) {
-                        (*mat)(i, j) = view(i, j);
-                    }
-                }
-            },
-            matrix);
+        py::array_t<T, py::array::c_style | py::array::forcecast> typed(values);
+        const py::buffer_info info = typed.request();
+        if (info.ndim != 2 || info.shape[0] != matrix->rows() ||
+            info.shape[1] != matrix->cols()) {
+            throw std::invalid_argument(
+                "DenseMatrix.from_numpy_copy() shape must match matrix.shape.");
+        }
+        auto view = typed.template unchecked<2>();
+        for (int j = 0; j < matrix->cols(); ++j) {
+            for (int i = 0; i < matrix->rows(); ++i) {
+                (*matrix)(i, j) = view(i, j);
+            }
+        }
 
         if ((dst & rxmesh::DEVICE) == rxmesh::DEVICE) {
             move(rxmesh::HOST, rxmesh::DEVICE, stream);
@@ -312,258 +258,163 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
     void copy_from(PyDenseMatrix& other,
                    int            source,
                    int            target,
-                   cudaStream_t   stream = nullptr)
+                   cudaStream_t   stream) override
     {
+        auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&other);
+        if (!typed) {
+            throw std::invalid_argument(
+                "DenseMatrix.copy_from() requires exactly matching typed "
+                "matrices.");
+        }
         const auto src = parse_location(source);
         const auto dst = parse_location(target);
-
-        std::visit(
-            [&](auto& dst_mat) {
-                using DstMatT = std::decay_t<decltype(dst_mat)>;
-                std::visit(
-                    [&](auto& src_mat) {
-                        using SrcMatT = std::decay_t<decltype(src_mat)>;
-                        if constexpr (std::is_same_v<DstMatT, SrcMatT>) {
-                            dst_mat->copy_from(*src_mat, src, dst, stream);
-                            allocated = static_cast<rxmesh::locationT>(
-                                static_cast<int>(allocated) |
-                                static_cast<int>(dst));
-                        } else {
-                            throw std::invalid_argument(
-                                "DenseMatrix.copy_from() requires exactly "
-                                "matching typed matrices.");
-                        }
-                    },
-                    other.matrix);
-            },
-            matrix);
+        matrix->copy_from(*typed->matrix, src, dst, stream);
+        allocated = static_cast<rxmesh::locationT>(static_cast<int>(allocated) |
+                                                   static_cast<int>(dst));
     }
 
-    py::object norm2(cudaStream_t stream = nullptr)
+    // BLAS-like (float/double only)
+    py::object norm2(cudaStream_t stream) override
     {
-        return std::visit(
-            [&](const auto& mat) -> py::object {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                if constexpr (std::is_same_v<T, int32_t>) {
-                    throw std::invalid_argument(
-                        "DenseMatrix.norm2() supports float32 and float64.");
-                } else {
-                    return py::cast(mat->norm2(stream));
-                }
-            },
-            matrix);
-    }
-
-    py::object abs_sum(cudaStream_t stream = nullptr)
-    {
-        return std::visit(
-            [&](const auto& mat) -> py::object {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                if constexpr (std::is_same_v<T, int32_t>) {
-                    throw std::invalid_argument(
-                        "DenseMatrix.abs_sum() supports float32 and float64.");
-                } else {
-                    return py::cast(mat->abs_sum(stream));
-                }
-            },
-            matrix);
-    }
-
-    py::object abs_max(cudaStream_t stream = nullptr)
-    {
-        return std::visit(
-            [&](const auto& mat) -> py::object {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                if constexpr (std::is_same_v<T, int32_t>) {
-                    throw std::invalid_argument(
-                        "DenseMatrix.abs_max() supports float32 and float64.");
-                } else {
-                    return py::cast(mat->abs_max(stream));
-                }
-            },
-            matrix);
-    }
-
-    py::object abs_min(cudaStream_t stream = nullptr)
-    {
-        return std::visit(
-            [&](const auto& mat) -> py::object {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                if constexpr (std::is_same_v<T, int32_t>) {
-                    throw std::invalid_argument(
-                        "DenseMatrix.abs_min() supports float32 and float64.");
-                } else {
-                    return py::cast(mat->abs_min(stream));
-                }
-            },
-            matrix);
-    }
-
-    py::object dot(PyDenseMatrix& other, cudaStream_t stream = nullptr)
-    {
-        if (dtype() != other.dtype() || rows() != other.rows() ||
-            cols() != other.cols()) {
+        if constexpr (std::is_same_v<T, int32_t>) {
             throw std::invalid_argument(
-                "DenseMatrix.dot() requires matching dtype and shape.");
+                "DenseMatrix.norm2() supports float32 and float64.");
+        } else {
+            return py::cast(matrix->norm2(stream));
         }
-
-        return std::visit(
-            [&](const auto& lhs) -> py::object {
-                using LhsMatT = std::decay_t<decltype(lhs)>;
-                return std::visit(
-                    [&](const auto& rhs) -> py::object {
-                        using RhsMatT = std::decay_t<decltype(rhs)>;
-                        if constexpr (std::is_same_v<LhsMatT, RhsMatT>) {
-                            using T = typename LhsMatT::element_type::Type;
-                            if constexpr (std::is_same_v<T, int32_t>) {
-                                throw std::invalid_argument(
-                                    "DenseMatrix.dot() supports float32 and "
-                                    "float64.");
-                            } else {
-                                return py::cast(lhs->dot(*rhs, false, stream));
-                            }
-                        } else {
-                            throw std::invalid_argument(
-                                "DenseMatrix.dot() requires exactly matching "
-                                "typed matrices.");
-                        }
-                    },
-                    other.matrix);
-            },
-            matrix);
     }
 
-    void axpy(PyDenseMatrix& x, py::object alpha, cudaStream_t stream = nullptr)
+    py::object abs_sum(cudaStream_t stream) override
     {
-        if (dtype() != x.dtype()) {
+        if constexpr (std::is_same_v<T, int32_t>) {
             throw std::invalid_argument(
-                "DenseMatrix.axpy() requires matching dtype and shape.");
+                "DenseMatrix.abs_sum() supports float32 and float64.");
+        } else {
+            return py::cast(matrix->abs_sum(stream));
         }
-
-        std::visit(
-            [&](auto& y_mat) {
-                using YMatT = std::decay_t<decltype(y_mat)>;
-                std::visit(
-                    [&](auto& x_mat) {
-                        using XMatT = std::decay_t<decltype(x_mat)>;
-                        if constexpr (std::is_same_v<YMatT, XMatT>) {
-                            using T = typename YMatT::element_type::Type;
-                            if constexpr (std::is_same_v<T, int32_t>) {
-                                throw std::invalid_argument(
-                                    "DenseMatrix.axpy() supports float32 and "
-                                    "float64.");
-                            } else {
-                                y_mat->axpy(*x_mat, alpha.cast<T>(), stream);
-                            }
-                        }
-                    },
-                    x.matrix);
-            },
-            matrix);
     }
 
-    void multiply(py::object scalar, cudaStream_t stream = nullptr)
+    py::object abs_max(cudaStream_t stream) override
     {
-        std::visit(
-            [&](auto& mat) {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                if constexpr (std::is_same_v<T, int32_t>) {
-                    throw std::invalid_argument(
-                        "DenseMatrix.multiply() supports float32 and float64.");
-                } else {
-                    mat->multiply(scalar.cast<T>(), stream);
-                }
-            },
-            matrix);
-    }
-
-    void swap(PyDenseMatrix& other, cudaStream_t stream = nullptr)
-    {
-        if (dtype() != other.dtype()) {
+        if constexpr (std::is_same_v<T, int32_t>) {
             throw std::invalid_argument(
-                "DenseMatrix.swap() requires matching dtype and shape.");
+                "DenseMatrix.abs_max() supports float32 and float64.");
+        } else {
+            return py::cast(matrix->abs_max(stream));
         }
-
-        std::visit(
-            [&](auto& lhs) {
-                using LhsMatT = std::decay_t<decltype(lhs)>;
-                std::visit(
-                    [&](auto& rhs) {
-                        using RhsMatT = std::decay_t<decltype(rhs)>;
-                        if constexpr (std::is_same_v<LhsMatT, RhsMatT>) {
-                            using T = typename LhsMatT::element_type::Type;
-                            if constexpr (std::is_same_v<T, int32_t>) {
-                                throw std::invalid_argument(
-                                    "DenseMatrix.swap() supports float32 and "
-                                    "float64.");
-                            } else {
-                                lhs->swap(*rhs, stream);
-                            }
-                        }
-                    },
-                    other.matrix);
-            },
-            matrix);
     }
 
-    void reshape(int rows, int cols)
+    py::object abs_min(cudaStream_t stream) override
     {
-        if (rows <= 0 || cols <= 0 ||
-            rows * cols != this->rows() * this->cols()) {
+        if constexpr (std::is_same_v<T, int32_t>) {
+            throw std::invalid_argument(
+                "DenseMatrix.abs_min() supports float32 and float64.");
+        } else {
+            return py::cast(matrix->abs_min(stream));
+        }
+    }
+
+    py::object dot(PyDenseMatrix& other, cudaStream_t stream) override
+    {
+        if constexpr (std::is_same_v<T, int32_t>) {
+            throw std::invalid_argument(
+                "DenseMatrix.dot() supports float32 and float64.");
+        } else {
+            auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&other);
+            if (!typed) {
+                throw std::invalid_argument(
+                    "DenseMatrix.dot() requires exactly matching typed "
+                    "matrices.");
+            }
+            if (rows() != typed->rows() || cols() != typed->cols()) {
+                throw std::invalid_argument(
+                    "DenseMatrix.dot() requires matching dtype and shape.");
+            }
+            return py::cast(matrix->dot(*typed->matrix, false, stream));
+        }
+    }
+
+    void axpy(PyDenseMatrix& x, py::object alpha, cudaStream_t stream) override
+    {
+        if constexpr (std::is_same_v<T, int32_t>) {
+            throw std::invalid_argument(
+                "DenseMatrix.axpy() supports float32 and float64.");
+        } else {
+            auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&x);
+            if (!typed) {
+                throw std::invalid_argument(
+                    "DenseMatrix.axpy() requires matching dtype.");
+            }
+            matrix->axpy(*typed->matrix, alpha.cast<T>(), stream);
+        }
+    }
+
+    void multiply(py::object scalar, cudaStream_t stream) override
+    {
+        if constexpr (std::is_same_v<T, int32_t>) {
+            throw std::invalid_argument(
+                "DenseMatrix.multiply() supports float32 and float64.");
+        } else {
+            matrix->multiply(scalar.cast<T>(), stream);
+        }
+    }
+
+    void swap(PyDenseMatrix& other, cudaStream_t stream) override
+    {
+        if constexpr (std::is_same_v<T, int32_t>) {
+            throw std::invalid_argument(
+                "DenseMatrix.swap() supports float32 and float64.");
+        } else {
+            auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&other);
+            if (!typed) {
+                throw std::invalid_argument(
+                    "DenseMatrix.swap() requires matching dtype.");
+            }
+            matrix->swap(*typed->matrix, stream);
+        }
+    }
+
+    // Shape / view ops
+    void reshape(int new_rows, int new_cols) override
+    {
+        if (new_rows <= 0 || new_cols <= 0 ||
+            new_rows * new_cols != rows() * cols()) {
             throw std::invalid_argument(
                 "DenseMatrix.reshape() must preserve element count.");
         }
-        std::visit([&](const auto& mat) { mat->reshape(rows, cols); }, matrix);
+        matrix->reshape(new_rows, new_cols);
     }
 
-    std::shared_ptr<PyDenseMatrix> col(int column)
+    std::shared_ptr<PyDenseMatrix> col(int column) override
     {
         if (column < 0 || column >= cols()) {
             throw std::out_of_range(
                 "DenseMatrix.col() column is out of range.");
         }
-        return std::visit(
-            [&](const auto& mat) -> std::shared_ptr<PyDenseMatrix> {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                DenseMatrixVariant view =
-                    std::make_shared<rxmesh::DenseMatrix<T, Eigen::ColMajor>>(
-                        mat->col(column));
-                auto ret = std::make_shared<PyDenseMatrix>(view, allocated);
-                ret->base_owner = shared_from_this();
-                return ret;
-            },
-            matrix);
+        auto view = std::make_shared<MatT>(matrix->col(column));
+        auto ret =
+            std::make_shared<PyDenseMatrixT<T>>(std::move(view), allocated);
+        ret->base_owner = shared_from_this();
+        return ret;
     }
 
-    std::shared_ptr<PyDenseMatrix> segment(int start, int count)
+    std::shared_ptr<PyDenseMatrix> segment(int start, int count) override
     {
         if (start < 0 || count < 0 || start + count > rows() * cols()) {
             throw std::out_of_range(
                 "DenseMatrix.segment() range is out of bounds.");
         }
-        return std::visit(
-            [&](const auto& mat) -> std::shared_ptr<PyDenseMatrix> {
-                using MatT = std::decay_t<decltype(mat)>;
-                using T    = typename MatT::element_type::Type;
-                DenseMatrixVariant view =
-                    std::make_shared<rxmesh::DenseMatrix<T, Eigen::ColMajor>>(
-                        mat->segment(start, count));
-                auto ret = std::make_shared<PyDenseMatrix>(view, allocated);
-                ret->base_owner = shared_from_this();
-                return ret;
-            },
-            matrix);
+        auto view = std::make_shared<MatT>(matrix->segment(start, count));
+        auto ret =
+            std::make_shared<PyDenseMatrixT<T>>(std::move(view), allocated);
+        ret->base_owner = shared_from_this();
+        return ret;
     }
 
-    void to_mtx(const std::string& file_name)
+    // File I/O
+    void to_mtx(const std::string& file_name) override
     {
-        std::visit([&](const auto& mat) { mat->to_mtx(file_name); }, matrix);
+        matrix->to_mtx(file_name);
     }
 
    private:
@@ -575,53 +426,160 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
         return row;
     }
 
-    template <typename T, typename MatT>
-    T read_value(MatT& mat, py::object row_or_handle, int col)
+    T read_value(py::object row_or_handle, int col)
     {
         if (py::isinstance<py::int_>(row_or_handle)) {
-            return mat(validate_row(row_or_handle.cast<int>()), col);
+            return (*matrix)(validate_row(row_or_handle.cast<int>()), col);
         }
         if (py::isinstance<rxmesh::VertexHandle>(row_or_handle)) {
-            const auto handle = row_or_handle.cast<rxmesh::VertexHandle>();
-            return mat(handle, col);
+            return (*matrix)(row_or_handle.cast<rxmesh::VertexHandle>(), col);
         }
         if (py::isinstance<rxmesh::EdgeHandle>(row_or_handle)) {
-            const auto handle = row_or_handle.cast<rxmesh::EdgeHandle>();
-            return mat(handle, col);
+            return (*matrix)(row_or_handle.cast<rxmesh::EdgeHandle>(), col);
         }
         if (py::isinstance<rxmesh::FaceHandle>(row_or_handle)) {
-            const auto handle = row_or_handle.cast<rxmesh::FaceHandle>();
-            return mat(handle, col);
+            return (*matrix)(row_or_handle.cast<rxmesh::FaceHandle>(), col);
         }
         throw py::type_error(
             "DenseMatrix row must be an int or RXMesh handle.");
     }
 
-    template <typename T, typename MatT>
-    void write_value(MatT& mat, py::object row_or_handle, int col, T value)
+    void write_value(py::object row_or_handle, int col, T value)
     {
         if (py::isinstance<py::int_>(row_or_handle)) {
-            mat(validate_row(row_or_handle.cast<int>()), col) = value;
+            (*matrix)(validate_row(row_or_handle.cast<int>()), col) = value;
             return;
         }
         if (py::isinstance<rxmesh::VertexHandle>(row_or_handle)) {
-            const auto handle = row_or_handle.cast<rxmesh::VertexHandle>();
-            mat(handle, col)  = value;
+            (*matrix)(row_or_handle.cast<rxmesh::VertexHandle>(), col) = value;
             return;
         }
         if (py::isinstance<rxmesh::EdgeHandle>(row_or_handle)) {
-            const auto handle = row_or_handle.cast<rxmesh::EdgeHandle>();
-            mat(handle, col)  = value;
+            (*matrix)(row_or_handle.cast<rxmesh::EdgeHandle>(), col) = value;
             return;
         }
         if (py::isinstance<rxmesh::FaceHandle>(row_or_handle)) {
-            const auto handle = row_or_handle.cast<rxmesh::FaceHandle>();
-            mat(handle, col)  = value;
+            (*matrix)(row_or_handle.cast<rxmesh::FaceHandle>(), col) = value;
             return;
         }
         throw py::type_error(
             "DenseMatrix row must be an int or RXMesh handle.");
     }
 };
+
+
+inline void validate_dense_matrix_shape(int rows, int cols)
+{
+    if (rows <= 0 || cols <= 0) {
+        throw std::invalid_argument(
+            "DenseMatrix rows and cols must be positive.");
+    }
+}
+
+inline void validate_dense_matrix_order(const std::string& order)
+{
+    if (order != "col_major" && order != "column_major" && order != "F") {
+        throw std::invalid_argument(
+            "DenseMatrix currently supports only col_major order.");
+    }
+}
+
+inline std::shared_ptr<PyDenseMatrix> make_dense_matrix(
+    int                rows,
+    int                cols,
+    const std::string& dtype,
+    int                location,
+    const std::string& order)
+{
+    validate_dense_matrix_shape(rows, cols);
+    validate_dense_matrix_order(order);
+    const auto loc = parse_location(location);
+    return dispatch_numeric_dtype_str(
+        dtype, [&](auto tag) -> std::shared_ptr<PyDenseMatrix> {
+            using T = typename decltype(tag)::type;
+            using MatT =
+                typename PyDenseMatrixT<T>::MatT;  // DenseMatrix<T, ColMajor>
+            return std::make_shared<PyDenseMatrixT<T>>(
+                std::make_shared<MatT>(rows, cols, loc), loc);
+        });
+}
+
+inline std::shared_ptr<PyDenseMatrix> make_dense_matrix_for_mesh(
+    std::shared_ptr<rxmesh::RXMeshStatic> mesh,
+    int                                   rows,
+    int                                   cols,
+    const std::string&                    dtype,
+    int                                   location,
+    const std::string&                    order)
+{
+    if (!mesh) {
+        throw std::invalid_argument(
+            "DenseMatrix mesh-aware constructor requires a mesh.");
+    }
+    validate_dense_matrix_shape(rows, cols);
+    validate_dense_matrix_order(order);
+    const auto loc = parse_location(location);
+    return dispatch_numeric_dtype_str(
+        dtype, [&](auto tag) -> std::shared_ptr<PyDenseMatrix> {
+            using T    = typename decltype(tag)::type;
+            using MatT = typename PyDenseMatrixT<T>::MatT;
+            return std::make_shared<PyDenseMatrixT<T>>(
+                std::make_shared<MatT>(*mesh, rows, cols, loc), loc);
+        });
+}
+
+/**
+ * Cast a PyDenseMatrix to its typed implementation, throwing error
+ * if the dtype does not match. Mirrors with_float_double_sparse_matrix in
+ * py_sparse_matrix.h. Used by sparse-dense multiply, attribute<->matrix
+ * bridges, DLPack import, and solver typed access paths.
+ */
+template <typename T>
+inline PyDenseMatrixT<T>& as_typed_dense(PyDenseMatrix& mat,
+                                         const char*    api_name)
+{
+    auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&mat);
+    if (!typed) {
+        throw std::invalid_argument(
+            std::string(api_name) +
+            " requires a DenseMatrix with matching dtype.");
+    }
+    return *typed;
+}
+
+template <typename T>
+inline const PyDenseMatrixT<T>& as_typed_dense(const PyDenseMatrix& mat,
+                                               const char*          api_name)
+{
+    const auto* typed = dynamic_cast<const PyDenseMatrixT<T>*>(&mat);
+    if (!typed) {
+        throw std::invalid_argument(
+            std::string(api_name) +
+            " requires a DenseMatrix with matching dtype.");
+    }
+    return *typed;
+}
+
+/**
+ * Dispatch to the typed PyDenseMatrixT<T> implementation by `dynamic_cast`,
+ * invoking `fn(typed)` with the matching reference. Used by code that needs
+ * to be polymorphic over the supported dtypes (float/double/int32) without
+ * knowing T at the call site, e.g. DLPack export, sparse-dense multiply.
+ */
+template <typename Fn>
+auto with_typed_dense_matrix(PyDenseMatrix& self, Fn&& fn)
+    -> decltype(std::forward<Fn>(fn)(std::declval<PyDenseMatrixT<float>&>()))
+{
+    if (auto* p = dynamic_cast<PyDenseMatrixT<float>*>(&self)) {
+        return std::forward<Fn>(fn)(*p);
+    }
+    if (auto* p = dynamic_cast<PyDenseMatrixT<double>*>(&self)) {
+        return std::forward<Fn>(fn)(*p);
+    }
+    if (auto* p = dynamic_cast<PyDenseMatrixT<int32_t>*>(&self)) {
+        return std::forward<Fn>(fn)(*p);
+    }
+    throw std::runtime_error("DenseMatrix has an unknown dtype.");
+}
 
 }  // namespace pyrxmesh_py
