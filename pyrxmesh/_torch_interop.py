@@ -114,9 +114,9 @@ def _dense_matrix_to_torch(self, location=Location.DEVICE):
     )
 
 
-def _dense_matrix_from_torch_copy(source):
+def _dense_matrix_from_torch_copy(source, order="col_major"):
     tensor = source.detach() if hasattr(source, "detach") else source
-    return DenseMatrix.from_dlpack_copy(tensor)
+    return DenseMatrix.from_dlpack_copy(tensor, order=order)
 
 
 def _sparse_matrix_to_torch(self, location=Location.DEVICE):

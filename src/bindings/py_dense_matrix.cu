@@ -22,6 +22,7 @@ void register_dense_matrix(py::module_& m)
         .def_static("from_dlpack_copy",
                     &dense_matrix_from_dlpack_copy,
                     py::arg("source"),
+                    py::arg("order") = "col_major",
                     "Copy a 2D CPU or CUDA DLPack tensor into new RXMesh "
                     "DenseMatrix memory.")
         .def_property_readonly("rows", &PyDenseMatrix::rows)

@@ -8,17 +8,31 @@ namespace pyrxmesh_py {
 // Forward decl of the typed implementation so factory helpers can construct
 // it from per-T context (DLPack copy, sparse multiply output, attribute
 // to_matrix_copy, dense view creation, etc.)
-template <typename T>
+template <typename T, int Order = Eigen::ColMajor>
 struct PyDenseMatrixT;
+
+
+template <int Order>
+constexpr const char* dense_order_name()
+{
+    static_assert(Order == Eigen::ColMajor || Order == Eigen::RowMajor,
+                  "Unsupported DenseMatrix storage order.");
+    if constexpr (Order == Eigen::RowMajor) {
+        return "row_major";
+    } else {
+        return "col_major";
+    }
+}
 
 
 // -----------------------------------------------------------------------------
 // PyDenseMatrix — non-templated polymorphic base.
 //
 // Mirrors the PySparseMatrix / PyAttributeBase pattern: dtype dispatch happens
-// at construction time (factory picks PyDenseMatrixT<T>), and all subsequent
-// operations go through virtual methods on the base. Binary operations
-// resolve their other operand via dynamic_cast<PyDenseMatrixT<T>*>.
+// at construction time (factory picks PyDenseMatrixT<T, Order>), and all
+// subsequent operations go through virtual methods on the base. Binary
+// operations resolve their other operand via dynamic_cast<PyDenseMatrixT<T,
+// Order>*>.
 // -----------------------------------------------------------------------------
 struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 {
@@ -32,15 +46,12 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
     virtual int         cols() const  = 0;
     virtual int         bytes() const = 0;
     virtual std::string dtype() const = 0;
+    virtual std::string order() const = 0;
 
     // Shared (non-virtual) helpers
     py::tuple shape() const
     {
         return py::make_tuple(rows(), cols());
-    }
-    std::string order() const
-    {
-        return "col_major";
     }
     int location() const
     {
@@ -103,13 +114,15 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 
 
 // -----------------------------------------------------------------------------
-// PyDenseMatrixT<T> — typed implementation. T must be float, double, or
-// int32_t.
+// PyDenseMatrixT<T, Order> — typed implementation. T must be float, double,
+// or int32_t. The default Order is Eigen::ColMajor for current RXMesh solver
+// and attribute paths.
 // -----------------------------------------------------------------------------
-template <typename T>
+template <typename T, int Order>
 struct PyDenseMatrixT final : PyDenseMatrix
 {
-    using MatT = rxmesh::DenseMatrix<T, Eigen::ColMajor>;
+    static constexpr int MatrixOrder = Order;
+    using MatT                       = rxmesh::DenseMatrix<T, Order>;
 
     std::shared_ptr<MatT> matrix;
 
@@ -144,6 +157,10 @@ struct PyDenseMatrixT final : PyDenseMatrix
     std::string dtype() const override
     {
         return std::string(dense_dtype_name<T>());
+    }
+    std::string order() const override
+    {
+        return std::string(dense_order_name<Order>());
     }
 
     // Allocation
@@ -201,12 +218,15 @@ struct PyDenseMatrixT final : PyDenseMatrix
                 "Move or create the matrix on HOST, or use "
                 "DenseMatrix.to_numpy_copy().");
         }
-        const int r     = matrix->rows();
-        const int c     = matrix->cols();
-        auto      owner = shared_from_this();
+        const int         r       = matrix->rows();
+        const int         c       = matrix->cols();
+        auto              owner   = shared_from_this();
+        const py::ssize_t stride0 = static_cast<py::ssize_t>(
+            sizeof(T) * (Order == Eigen::RowMajor ? c : 1));
+        const py::ssize_t stride1 = static_cast<py::ssize_t>(
+            sizeof(T) * (Order == Eigen::RowMajor ? 1 : r));
         return py::array_t<T>({r, c},
-                              {static_cast<py::ssize_t>(sizeof(T)),
-                               static_cast<py::ssize_t>(sizeof(T) * r)},
+                              {stride0, stride1},
                               matrix->data(rxmesh::HOST),
                               py::cast(owner));
     }
@@ -260,10 +280,10 @@ struct PyDenseMatrixT final : PyDenseMatrix
                    int            target,
                    cudaStream_t   stream) override
     {
-        auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&other);
+        auto* typed = dynamic_cast<PyDenseMatrixT<T, Order>*>(&other);
         if (!typed) {
             throw std::invalid_argument(
-                "DenseMatrix.copy_from() requires exactly matching typed "
+                "DenseMatrix.copy_from() requires exactly matching dtype/order "
                 "matrices.");
         }
         const auto src = parse_location(source);
@@ -320,10 +340,10 @@ struct PyDenseMatrixT final : PyDenseMatrix
             throw std::invalid_argument(
                 "DenseMatrix.dot() supports float32 and float64.");
         } else {
-            auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&other);
+            auto* typed = dynamic_cast<PyDenseMatrixT<T, Order>*>(&other);
             if (!typed) {
                 throw std::invalid_argument(
-                    "DenseMatrix.dot() requires exactly matching typed "
+                    "DenseMatrix.dot() requires exactly matching dtype/order "
                     "matrices.");
             }
             if (rows() != typed->rows() || cols() != typed->cols()) {
@@ -340,10 +360,10 @@ struct PyDenseMatrixT final : PyDenseMatrix
             throw std::invalid_argument(
                 "DenseMatrix.axpy() supports float32 and float64.");
         } else {
-            auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&x);
+            auto* typed = dynamic_cast<PyDenseMatrixT<T, Order>*>(&x);
             if (!typed) {
                 throw std::invalid_argument(
-                    "DenseMatrix.axpy() requires matching dtype.");
+                    "DenseMatrix.axpy() requires matching dtype and order.");
             }
             matrix->axpy(*typed->matrix, alpha.cast<T>(), stream);
         }
@@ -365,10 +385,10 @@ struct PyDenseMatrixT final : PyDenseMatrix
             throw std::invalid_argument(
                 "DenseMatrix.swap() supports float32 and float64.");
         } else {
-            auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&other);
+            auto* typed = dynamic_cast<PyDenseMatrixT<T, Order>*>(&other);
             if (!typed) {
                 throw std::invalid_argument(
-                    "DenseMatrix.swap() requires matching dtype.");
+                    "DenseMatrix.swap() requires matching dtype and order.");
             }
             matrix->swap(*typed->matrix, stream);
         }
@@ -391,11 +411,17 @@ struct PyDenseMatrixT final : PyDenseMatrix
             throw std::out_of_range(
                 "DenseMatrix.col() column is out of range.");
         }
-        auto view = std::make_shared<MatT>(matrix->col(column));
-        auto ret =
-            std::make_shared<PyDenseMatrixT<T>>(std::move(view), allocated);
-        ret->base_owner = shared_from_this();
-        return ret;
+        if constexpr (Order == Eigen::RowMajor) {
+            throw std::invalid_argument(
+                "DenseMatrix.col() currently supports only col_major "
+                "matrices.");
+        } else {
+            auto view = std::make_shared<MatT>(matrix->col(column));
+            auto ret  = std::make_shared<PyDenseMatrixT<T, Order>>(
+                std::move(view), allocated);
+            ret->base_owner = shared_from_this();
+            return ret;
+        }
     }
 
     std::shared_ptr<PyDenseMatrix> segment(int start, int count) override
@@ -405,8 +431,8 @@ struct PyDenseMatrixT final : PyDenseMatrix
                 "DenseMatrix.segment() range is out of bounds.");
         }
         auto view = std::make_shared<MatT>(matrix->segment(start, count));
-        auto ret =
-            std::make_shared<PyDenseMatrixT<T>>(std::move(view), allocated);
+        auto ret  = std::make_shared<PyDenseMatrixT<T, Order>>(std::move(view),
+                                                              allocated);
         ret->base_owner = shared_from_this();
         return ret;
     }
@@ -476,12 +502,17 @@ inline void validate_dense_matrix_shape(int rows, int cols)
     }
 }
 
-inline void validate_dense_matrix_order(const std::string& order)
+inline int parse_dense_matrix_order(const std::string& order)
 {
     if (order != "col_major" && order != "column_major" && order != "F") {
+        if (order == "row_major" || order == "row" || order == "C") {
+            return Eigen::RowMajor;
+        }
         throw std::invalid_argument(
-            "DenseMatrix currently supports only col_major order.");
+            "DenseMatrix order must be col_major/column_major/F or "
+            "row_major/row/C.");
     }
+    return Eigen::ColMajor;
 }
 
 inline std::shared_ptr<PyDenseMatrix> make_dense_matrix(
@@ -492,14 +523,18 @@ inline std::shared_ptr<PyDenseMatrix> make_dense_matrix(
     const std::string& order)
 {
     validate_dense_matrix_shape(rows, cols);
-    validate_dense_matrix_order(order);
-    const auto loc = parse_location(location);
+    const int  storage_order = parse_dense_matrix_order(order);
+    const auto loc           = parse_location(location);
     return dispatch_numeric_dtype_str(
         dtype, [&](auto tag) -> std::shared_ptr<PyDenseMatrix> {
             using T = typename decltype(tag)::type;
-            using MatT =
-                typename PyDenseMatrixT<T>::MatT;  // DenseMatrix<T, ColMajor>
-            return std::make_shared<PyDenseMatrixT<T>>(
+            if (storage_order == Eigen::RowMajor) {
+                using MatT = typename PyDenseMatrixT<T, Eigen::RowMajor>::MatT;
+                return std::make_shared<PyDenseMatrixT<T, Eigen::RowMajor>>(
+                    std::make_shared<MatT>(rows, cols, loc), loc);
+            }
+            using MatT = typename PyDenseMatrixT<T, Eigen::ColMajor>::MatT;
+            return std::make_shared<PyDenseMatrixT<T, Eigen::ColMajor>>(
                 std::make_shared<MatT>(rows, cols, loc), loc);
         });
 }
@@ -517,13 +552,18 @@ inline std::shared_ptr<PyDenseMatrix> make_dense_matrix_for_mesh(
             "DenseMatrix mesh-aware constructor requires a mesh.");
     }
     validate_dense_matrix_shape(rows, cols);
-    validate_dense_matrix_order(order);
-    const auto loc = parse_location(location);
+    const int  storage_order = parse_dense_matrix_order(order);
+    const auto loc           = parse_location(location);
     return dispatch_numeric_dtype_str(
         dtype, [&](auto tag) -> std::shared_ptr<PyDenseMatrix> {
-            using T    = typename decltype(tag)::type;
-            using MatT = typename PyDenseMatrixT<T>::MatT;
-            return std::make_shared<PyDenseMatrixT<T>>(
+            using T = typename decltype(tag)::type;
+            if (storage_order == Eigen::RowMajor) {
+                using MatT = typename PyDenseMatrixT<T, Eigen::RowMajor>::MatT;
+                return std::make_shared<PyDenseMatrixT<T, Eigen::RowMajor>>(
+                    std::make_shared<MatT>(*mesh, rows, cols, loc), loc);
+            }
+            using MatT = typename PyDenseMatrixT<T, Eigen::ColMajor>::MatT;
+            return std::make_shared<PyDenseMatrixT<T, Eigen::ColMajor>>(
                 std::make_shared<MatT>(*mesh, rows, cols, loc), loc);
         });
 }
@@ -534,52 +574,72 @@ inline std::shared_ptr<PyDenseMatrix> make_dense_matrix_for_mesh(
  * py_sparse_matrix.h. Used by sparse-dense multiply, attribute<->matrix
  * bridges, DLPack import, and solver typed access paths.
  */
-template <typename T>
-inline PyDenseMatrixT<T>& as_typed_dense(PyDenseMatrix& mat,
-                                         const char*    api_name)
+template <typename T, int Order = Eigen::ColMajor>
+inline PyDenseMatrixT<T, Order>& as_typed_dense(PyDenseMatrix& mat,
+                                                const char*    api_name)
 {
-    auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&mat);
+    auto* typed = dynamic_cast<PyDenseMatrixT<T, Order>*>(&mat);
     if (!typed) {
         throw std::invalid_argument(
             std::string(api_name) +
-            " requires a DenseMatrix with matching dtype.");
+            " requires a DenseMatrix with matching dtype and order.");
     }
     return *typed;
 }
 
-template <typename T>
-inline const PyDenseMatrixT<T>& as_typed_dense(const PyDenseMatrix& mat,
-                                               const char*          api_name)
+template <typename T, int Order = Eigen::ColMajor>
+inline const PyDenseMatrixT<T, Order>& as_typed_dense(const PyDenseMatrix& mat,
+                                                      const char* api_name)
 {
-    const auto* typed = dynamic_cast<const PyDenseMatrixT<T>*>(&mat);
+    const auto* typed = dynamic_cast<const PyDenseMatrixT<T, Order>*>(&mat);
     if (!typed) {
         throw std::invalid_argument(
             std::string(api_name) +
-            " requires a DenseMatrix with matching dtype.");
+            " requires a DenseMatrix with matching dtype and order.");
     }
     return *typed;
 }
 
 /**
- * Dispatch to the typed PyDenseMatrixT<T> implementation by `dynamic_cast`,
- * invoking `fn(typed)` with the matching reference. Used by code that needs
- * to be polymorphic over the supported dtypes (float/double/int32) without
- * knowing T at the call site, e.g. DLPack export, sparse-dense multiply.
+ * Dispatch to the typed PyDenseMatrixT<T, Order> implementation by
+ * `dynamic_cast`,
+ * invoking `fn(typed)` with the matching reference. Used by
+ * code that needs
+ * to be polymorphic over the supported dtypes
+ * (float/double/int32) without
+ * knowing T at the call site, e.g. DLPack
+ * export, sparse-dense multiply.
  */
 template <typename Fn>
 auto with_typed_dense_matrix(PyDenseMatrix& self, Fn&& fn)
-    -> decltype(std::forward<Fn>(fn)(std::declval<PyDenseMatrixT<float>&>()))
+    -> decltype(std::forward<Fn>(fn)(
+        std::declval<PyDenseMatrixT<float, Eigen::ColMajor>&>()))
 {
-    if (auto* p = dynamic_cast<PyDenseMatrixT<float>*>(&self)) {
+    if (auto* p =
+            dynamic_cast<PyDenseMatrixT<float, Eigen::ColMajor>*>(&self)) {
         return std::forward<Fn>(fn)(*p);
     }
-    if (auto* p = dynamic_cast<PyDenseMatrixT<double>*>(&self)) {
+    if (auto* p =
+            dynamic_cast<PyDenseMatrixT<double, Eigen::ColMajor>*>(&self)) {
         return std::forward<Fn>(fn)(*p);
     }
-    if (auto* p = dynamic_cast<PyDenseMatrixT<int32_t>*>(&self)) {
+    if (auto* p =
+            dynamic_cast<PyDenseMatrixT<int32_t, Eigen::ColMajor>*>(&self)) {
         return std::forward<Fn>(fn)(*p);
     }
-    throw std::runtime_error("DenseMatrix has an unknown dtype.");
+    if (auto* p =
+            dynamic_cast<PyDenseMatrixT<float, Eigen::RowMajor>*>(&self)) {
+        return std::forward<Fn>(fn)(*p);
+    }
+    if (auto* p =
+            dynamic_cast<PyDenseMatrixT<double, Eigen::RowMajor>*>(&self)) {
+        return std::forward<Fn>(fn)(*p);
+    }
+    if (auto* p =
+            dynamic_cast<PyDenseMatrixT<int32_t, Eigen::RowMajor>*>(&self)) {
+        return std::forward<Fn>(fn)(*p);
+    }
+    throw std::runtime_error("DenseMatrix has an unknown dtype or order.");
 }
 
 }  // namespace pyrxmesh_py

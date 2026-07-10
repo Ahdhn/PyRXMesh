@@ -9,6 +9,7 @@ import torch
 def test_dense_matrix_numpy_round_trip_and_host_view_zero_copy() -> None:
     matrix = rx.DenseMatrix(4, 3, dtype="float32", location=rx.Location.HOST)
     values = np.arange(12, dtype=np.float32).reshape(4, 3)
+    assert matrix.order == "col_major"
 
     matrix.from_numpy_copy(values, target=rx.Location.HOST)
     copied = matrix.to_numpy_copy(source=rx.Location.HOST)
@@ -18,6 +19,29 @@ def test_dense_matrix_numpy_round_trip_and_host_view_zero_copy() -> None:
 
     view = matrix.to_numpy(rx.Location.HOST)
     assert view.flags["F_CONTIGUOUS"]
+    view[2, 1] = 42.0
+    assert matrix.to_numpy_copy(source=rx.Location.HOST)[2, 1] == 42.0
+
+
+def test_dense_matrix_row_major_numpy_round_trip_and_host_view_zero_copy() -> None:
+    matrix = rx.DenseMatrix(
+        4,
+        3,
+        dtype="float32",
+        location=rx.Location.HOST,
+        order="row_major",
+    )
+    values = np.arange(12, dtype=np.float32).reshape(4, 3)
+    assert matrix.order == "row_major"
+
+    matrix.from_numpy_copy(values, target=rx.Location.HOST)
+    copied = matrix.to_numpy_copy(source=rx.Location.HOST)
+    np.testing.assert_allclose(copied, values)
+
+    view = matrix.to_numpy(rx.Location.HOST)
+    assert view.flags["C_CONTIGUOUS"]
+    assert not view.flags["F_CONTIGUOUS"]
+    assert view.strides == (values.strides[0], values.strides[1])
     view[2, 1] = 42.0
     assert matrix.to_numpy_copy(source=rx.Location.HOST)[2, 1] == 42.0
 
@@ -125,17 +149,56 @@ def test_dense_matrix_torch_dlpack_cpu_zero_copy() -> None:
     assert matrix.to_numpy_copy(source=rx.Location.HOST)[1, 2] == 99.0
 
 
+def test_dense_matrix_row_major_torch_dlpack_cpu_zero_copy() -> None:
+    matrix = rx.DenseMatrix(
+        4,
+        3,
+        dtype="float32",
+        location=rx.Location.HOST,
+        order="row_major",
+    )
+    values = np.arange(12, dtype=np.float32).reshape(4, 3)
+    matrix.from_numpy_copy(values, target=rx.Location.HOST)
+
+    tensor = matrix.to_torch(rx.Location.HOST)
+    assert tuple(tensor.shape) == (4, 3)
+    assert tensor.stride() == (3, 1)
+    assert not tensor.is_cuda
+    tensor[1, 2] = 99.0
+
+    assert matrix.to_numpy_copy(source=rx.Location.HOST)[1, 2] == 99.0
+
+
 def test_dense_matrix_from_torch_copy_cpu_keeps_rxmesh_ownership() -> None:
     values = torch.arange(12, dtype=torch.float32).reshape(4, 3)
     copied = rx.DenseMatrix.from_torch_copy(values)
     assert copied.shape == (4, 3)
     assert copied.dtype == "float32"
+    assert copied.order == "col_major"
     np.testing.assert_allclose(copied.to_numpy_copy(source=rx.Location.HOST), values.numpy())
 
     values[:, :] = -1.0
     np.testing.assert_allclose(
         copied.to_numpy_copy(source=rx.Location.HOST),
         np.arange(12, dtype=np.float32).reshape(4, 3),
+    )
+
+
+def test_dense_matrix_from_torch_copy_cpu_supports_row_major() -> None:
+    values = torch.arange(12, dtype=torch.float32).reshape(3, 4).t()
+    copied = rx.DenseMatrix.from_torch_copy(values, order="row_major")
+    assert copied.shape == (4, 3)
+    assert copied.dtype == "float32"
+    assert copied.order == "row_major"
+    np.testing.assert_allclose(
+        copied.to_numpy_copy(source=rx.Location.HOST),
+        values.numpy(),
+    )
+
+    values[:, :] = -1.0
+    np.testing.assert_allclose(
+        copied.to_numpy_copy(source=rx.Location.HOST),
+        np.arange(12, dtype=np.float32).reshape(3, 4).T,
     )
 
 
@@ -170,6 +233,29 @@ def test_dense_matrix_torch_dlpack_cuda_zero_copy() -> None:
     assert matrix.to_numpy_copy(source=rx.Location.HOST)[3, 1] == 123.0
 
 
+def test_dense_matrix_row_major_torch_dlpack_cuda_zero_copy() -> None:
+    matrix = rx.DenseMatrix(
+        4,
+        3,
+        dtype="float32",
+        location=rx.Location.ALL,
+        order="row_major",
+    )
+    values = np.arange(12, dtype=np.float32).reshape(4, 3)
+    matrix.from_numpy_copy(values, target=rx.Location.ALL)
+
+    tensor = matrix.to_torch()
+    assert tuple(tensor.shape) == (4, 3)
+    assert tensor.stride() == (3, 1)
+    assert tensor.is_cuda
+    tensor[3, 1] = 123.0
+    torch.cuda.synchronize()
+
+    matrix.move(rx.Location.DEVICE, rx.Location.HOST)
+    rx.cuda_stream_synchronize()
+    assert matrix.to_numpy_copy(source=rx.Location.HOST)[3, 1] == 123.0
+
+
 def test_dense_matrix_from_dlpack_copy_cuda_keeps_rxmesh_ownership() -> None:
     source = rx.DenseMatrix(4, 3, dtype="float32", location=rx.Location.ALL)
     values = np.arange(12, dtype=np.float32).reshape(4, 3)
@@ -183,6 +269,19 @@ def test_dense_matrix_from_dlpack_copy_cuda_keeps_rxmesh_ownership() -> None:
 
     source.reset(-1.0, location=rx.Location.ALL)
     np.testing.assert_allclose(copied.to_numpy_copy(source=rx.Location.HOST), values)
+
+
+def test_dense_matrix_from_torch_copy_cuda_supports_row_major() -> None:
+    values = torch.arange(12, dtype=torch.float32, device="cuda").reshape(4, 3)
+    copied = rx.DenseMatrix.from_torch_copy(values, order="row_major")
+    assert copied.is_device_allocated
+    assert copied.order == "row_major"
+    copied.move(rx.Location.DEVICE, rx.Location.HOST)
+    rx.cuda_stream_synchronize()
+    np.testing.assert_allclose(
+        copied.to_numpy_copy(source=rx.Location.HOST),
+        np.arange(12, dtype=np.float32).reshape(4, 3),
+    )
 
 
 def test_dense_matrix_from_torch_copy_cuda_respects_producer_stream() -> None:

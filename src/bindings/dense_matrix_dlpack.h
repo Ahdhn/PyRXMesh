@@ -19,13 +19,13 @@ struct DlpackContext
     int64_t                        strides[2];
 };
 
-template <typename T>
-__global__ void copy_dlpack_to_dense_col_major_kernel(T*       dst,
-                                                      const T* src,
-                                                      int64_t  rows,
-                                                      int64_t  cols,
-                                                      int64_t  stride0,
-                                                      int64_t  stride1)
+template <typename T, int Order>
+__global__ void copy_dlpack_to_dense_kernel(T*       dst,
+                                            const T* src,
+                                            int64_t  rows,
+                                            int64_t  cols,
+                                            int64_t  stride0,
+                                            int64_t  stride1)
 {
     const int64_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     const int64_t n   = rows * cols;
@@ -33,9 +33,16 @@ __global__ void copy_dlpack_to_dense_col_major_kernel(T*       dst,
         return;
     }
 
-    const int64_t row = idx % rows;
-    const int64_t col = idx / rows;
-    dst[idx]          = src[row * stride0 + col * stride1];
+    int64_t row;
+    int64_t col;
+    if constexpr (Order == Eigen::RowMajor) {
+        row = idx / cols;
+        col = idx % cols;
+    } else {
+        row = idx % rows;
+        col = idx / rows;
+    }
+    dst[idx] = src[row * stride0 + col * stride1];
 }
 
 inline py::capsule dense_matrix_to_dlpack(std::shared_ptr<PyDenseMatrix> self,
@@ -76,10 +83,15 @@ inline py::capsule dense_matrix_to_dlpack(std::shared_ptr<PyDenseMatrix> self,
         using T      = typename TypedT::MatT::Type;
         auto& mat    = *typed.matrix;
 
-        context->shape[0]   = mat.rows();
-        context->shape[1]   = mat.cols();
-        context->strides[0] = 1;
-        context->strides[1] = mat.rows();
+        context->shape[0] = mat.rows();
+        context->shape[1] = mat.cols();
+        if constexpr (TypedT::MatrixOrder == Eigen::RowMajor) {
+            context->strides[0] = mat.cols();
+            context->strides[1] = 1;
+        } else {
+            context->strides[0] = 1;
+            context->strides[1] = mat.rows();
+        }
 
         int device_id = 0;
         if (loc == rxmesh::DEVICE) {
@@ -119,7 +131,7 @@ inline py::capsule dense_matrix_dunder_dlpack(
     return dense_matrix_to_dlpack(std::move(self), loc, std::move(stream));
 }
 
-template <typename T>
+template <typename T, int Order>
 inline void copy_dlpack_to_dense_matrix_typed(PyDenseMatrix&          output,
                                               const dlpack::DLTensor& tensor,
                                               rxmesh::locationT       location,
@@ -129,10 +141,10 @@ inline void copy_dlpack_to_dense_matrix_typed(PyDenseMatrix&          output,
 {
     using namespace rxmesh;
 
-    auto* typed = dynamic_cast<PyDenseMatrixT<T>*>(&output);
+    auto* typed = dynamic_cast<PyDenseMatrixT<T, Order>*>(&output);
     if (!typed || !typed->matrix) {
         throw std::invalid_argument(
-            "DenseMatrix.from_dlpack_copy() internal dtype mismatch.");
+            "DenseMatrix.from_dlpack_copy() internal dtype/order mismatch.");
     }
 
     auto& mat = *typed->matrix;
@@ -148,7 +160,7 @@ inline void copy_dlpack_to_dense_matrix_typed(PyDenseMatrix&          output,
     } else {
         constexpr int threads = 256;
         const int64_t n       = tensor.shape[0] * tensor.shape[1];
-        copy_dlpack_to_dense_col_major_kernel<T>
+        copy_dlpack_to_dense_kernel<T, Order>
             <<<static_cast<int>((n + threads - 1) / threads),
                threads,
                0,
@@ -164,9 +176,11 @@ inline void copy_dlpack_to_dense_matrix_typed(PyDenseMatrix&          output,
 }
 
 inline std::shared_ptr<PyDenseMatrix> dense_matrix_from_dlpack_copy(
-    py::object source)
+    py::object         source,
+    const std::string& order = "col_major")
 {
-    py::object capsule = dlpack_util::acquire_capsule(
+    const int  storage_order = parse_dense_matrix_order(order);
+    py::object capsule       = dlpack_util::acquire_capsule(
         std::move(source), "DenseMatrix.from_dlpack_copy()");
     auto* managed = dlpack_util::extract_managed(capsule);
     if (!managed) {
@@ -211,10 +225,15 @@ inline std::shared_ptr<PyDenseMatrix> dense_matrix_from_dlpack_copy(
                                              static_cast<int>(tensor.shape[1]),
                                              dtype,
                                              static_cast<int>(location),
-                                             "col_major");
+                                             order);
                 const cudaStream_t copy_stream = nullptr;
-                copy_dlpack_to_dense_matrix_typed<T>(
-                    *out, tensor, location, stride0, stride1, copy_stream);
+                if (storage_order == Eigen::RowMajor) {
+                    copy_dlpack_to_dense_matrix_typed<T, Eigen::RowMajor>(
+                        *out, tensor, location, stride0, stride1, copy_stream);
+                } else {
+                    copy_dlpack_to_dense_matrix_typed<T, Eigen::ColMajor>(
+                        *out, tensor, location, stride0, stride1, copy_stream);
+                }
                 return out;
             });
         dlpack_util::mark_consumed(capsule, managed);
