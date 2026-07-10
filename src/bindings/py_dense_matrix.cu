@@ -25,6 +25,12 @@ void register_dense_matrix(py::module_& m)
                     py::arg("order") = "col_major",
                     "Copy a 2D CPU or CUDA DLPack tensor into new RXMesh "
                     "DenseMatrix memory.")
+        .def_static("from_dlpack_view",
+                    &dense_matrix_from_dlpack_view,
+                    py::arg("source"),
+                    py::arg("order") = "col_major",
+                    "View a compact 2D CPU or CUDA DLPack tensor as a "
+                    "DenseMatrix without taking ownership of its memory.")
         .def_property_readonly("rows", &PyDenseMatrix::rows)
         .def_property_readonly("cols", &PyDenseMatrix::cols)
         .def_property_readonly("shape", &PyDenseMatrix::shape)
@@ -36,6 +42,7 @@ void register_dense_matrix(py::module_& m)
                                &PyDenseMatrix::is_host_allocated)
         .def_property_readonly("is_device_allocated",
                                &PyDenseMatrix::is_device_allocated)
+        .def_property_readonly("is_view", &PyDenseMatrix::is_view)
         .def(
             "move",
             [](PyDenseMatrix& self, int source, int target, py::object stream) {

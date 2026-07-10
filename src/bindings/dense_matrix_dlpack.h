@@ -19,6 +19,23 @@ struct DlpackContext
     int64_t                        strides[2];
 };
 
+struct DenseMatrixDlpackViewOwner
+{
+    dlpack::DLManagedTensor* managed = nullptr;
+
+    explicit DenseMatrixDlpackViewOwner(dlpack::DLManagedTensor* in_managed)
+        : managed(in_managed)
+    {
+    }
+
+    ~DenseMatrixDlpackViewOwner()
+    {
+        if (managed && managed->deleter) {
+            managed->deleter(managed);
+        }
+    }
+};
+
 template <typename T, int Order>
 __global__ void copy_dlpack_to_dense_kernel(T*       dst,
                                             const T* src,
@@ -240,6 +257,129 @@ inline std::shared_ptr<PyDenseMatrix> dense_matrix_from_dlpack_copy(
         return output;
     } catch (...) {
         dlpack_util::mark_consumed(capsule, managed);
+        throw;
+    }
+}
+
+inline void validate_dense_matrix_view_strides(const dlpack::DLTensor& tensor,
+                                               int storage_order)
+{
+    const int64_t rows = tensor.shape[0];
+    const int64_t cols = tensor.shape[1];
+    const int64_t stride0 =
+        tensor.strides ? tensor.strides[0] : tensor.shape[1];
+    const int64_t stride1 = tensor.strides ? tensor.strides[1] : 1;
+
+    if (storage_order == Eigen::RowMajor) {
+        if (stride0 != cols || stride1 != 1) {
+            throw std::invalid_argument(
+                "DenseMatrix.from_dlpack_view() requires compact row_major "
+                "strides (cols, 1).");
+        }
+    } else if (stride0 != 1 || stride1 != rows) {
+        throw std::invalid_argument(
+            "DenseMatrix.from_dlpack_view() requires compact col_major "
+            "strides (1, rows).");
+    }
+}
+
+template <typename T, int Order>
+inline std::shared_ptr<PyDenseMatrix> make_dense_matrix_view_from_dlpack_typed(
+    const dlpack::DLTensor& tensor,
+    rxmesh::locationT       location,
+    std::shared_ptr<void>   owner)
+{
+    auto* ptr   = reinterpret_cast<T*>(static_cast<char*>(tensor.data) +
+                                     tensor.byte_offset);
+    T*    h_ptr = location == rxmesh::HOST ? ptr : nullptr;
+    T*    d_ptr = location == rxmesh::DEVICE ? ptr : nullptr;
+
+    using MatT = typename PyDenseMatrixT<T, Order>::MatT;
+    auto out   = std::make_shared<PyDenseMatrixT<T, Order>>(
+        std::make_shared<MatT>(static_cast<int>(tensor.shape[0]),
+                               static_cast<int>(tensor.shape[1]),
+                               d_ptr,
+                               h_ptr),
+        location);
+    out->external_view  = true;
+    out->external_owner = std::move(owner);
+    return out;
+}
+
+inline void consume_dlpack_capsule_for_view(py::object               capsule,
+                                            dlpack::DLManagedTensor* managed)
+{
+    if (PyCapsule_SetName(capsule.ptr(), "used_dltensor") != 0 ||
+        PyCapsule_SetDestructor(capsule.ptr(), nullptr) != 0) {
+        PyErr_Clear();
+        dlpack_util::mark_consumed(std::move(capsule), managed);
+        throw std::runtime_error(
+            "DenseMatrix.from_dlpack_view() failed to consume the DLPack "
+            "capsule.");
+    }
+}
+
+inline std::shared_ptr<PyDenseMatrix> dense_matrix_from_dlpack_view(
+    py::object         source,
+    const std::string& order = "col_major")
+{
+    const int  storage_order = parse_dense_matrix_order(order);
+    py::object capsule       = dlpack_util::acquire_capsule(
+        std::move(source), "DenseMatrix.from_dlpack_view()");
+    auto* managed = dlpack_util::extract_managed(capsule);
+    if (!managed) {
+        PyErr_Clear();
+        throw std::invalid_argument(
+            "DenseMatrix.from_dlpack_view() received an invalid DLPack "
+            "capsule.");
+    }
+
+    bool capsule_consumed = false;
+    try {
+        const dlpack::DLTensor& tensor = managed->dl_tensor;
+        if (tensor.ndim != 2) {
+            throw std::invalid_argument(
+                "DenseMatrix.from_dlpack_view() expects a 2D tensor.");
+        }
+        if (tensor.shape[0] <= 0 || tensor.shape[1] <= 0) {
+            throw std::invalid_argument(
+                "DenseMatrix.from_dlpack_view() expects positive tensor "
+                "dimensions.");
+        }
+        validate_dense_matrix_view_strides(tensor, storage_order);
+
+        rxmesh::locationT location;
+        if (tensor.device.device_type == dlpack::kDLCPU) {
+            location = rxmesh::HOST;
+        } else if (tensor.device.device_type == dlpack::kDLCUDA) {
+            location = rxmesh::DEVICE;
+        } else {
+            throw std::invalid_argument(
+                "DenseMatrix.from_dlpack_view() supports CPU and CUDA DLPack "
+                "tensors.");
+        }
+
+        const std::string dtype = dlpack_util::dtype_to_name(tensor.dtype);
+        consume_dlpack_capsule_for_view(capsule, managed);
+        capsule_consumed = true;
+        auto owner = std::make_shared<DenseMatrixDlpackViewOwner>(managed);
+
+        return dispatch_numeric_dtype_str(
+            dtype, [&](auto tag) -> std::shared_ptr<PyDenseMatrix> {
+                using T = typename decltype(tag)::type;
+                if (storage_order == Eigen::RowMajor) {
+                    return make_dense_matrix_view_from_dlpack_typed<
+                        T,
+                        Eigen::RowMajor>(tensor, location, owner);
+                }
+                return make_dense_matrix_view_from_dlpack_typed<
+                    T,
+                    Eigen::ColMajor>(tensor, location, owner);
+            });
+    } catch (...) {
+        if (!capsule_consumed) {
+            dlpack_util::mark_consumed(capsule, managed);
+        }
         throw;
     }
 }

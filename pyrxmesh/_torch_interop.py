@@ -119,6 +119,10 @@ def _dense_matrix_from_torch_copy(source, order="col_major"):
     return DenseMatrix.from_dlpack_copy(tensor, order=order)
 
 
+def _dense_matrix_from_torch_view(source, order="col_major"):
+    return DenseMatrix.from_dlpack_view(source, order=order)
+
+
 def _sparse_matrix_to_torch(self, location=Location.DEVICE):
     torch = _require_torch()
     crow = torch.utils.dlpack.from_dlpack(
@@ -181,6 +185,7 @@ def _attribute_from_torch_copy(self, values, target=Location.ALL):
 
 DenseMatrix.to_torch = _dense_matrix_to_torch
 DenseMatrix.from_torch_copy = staticmethod(_dense_matrix_from_torch_copy)
+DenseMatrix.from_torch_view = staticmethod(_dense_matrix_from_torch_view)
 SparseMatrix.to_torch = _sparse_matrix_to_torch
 SparseMatrix.from_torch_copy = staticmethod(_sparse_matrix_from_torch_copy)
 SparseMatrix.from_torch_values_copy = _sparse_matrix_from_torch_values_copy

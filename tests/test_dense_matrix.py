@@ -202,6 +202,53 @@ def test_dense_matrix_from_torch_copy_cpu_supports_row_major() -> None:
     )
 
 
+def test_dense_matrix_from_torch_view_cpu_shares_row_major_memory() -> None:
+    values = torch.arange(12, dtype=torch.float32).reshape(4, 3)
+    view = rx.DenseMatrix.from_torch_view(values, order="row_major")
+
+    assert view.is_view
+    assert view.order == "row_major"
+    assert view.shape == (4, 3)
+    assert view.is_host_allocated
+    assert not view.is_device_allocated
+    np.testing.assert_allclose(view.to_numpy_copy(rx.Location.HOST), values.numpy())
+
+    values[1, 2] = 77.0
+    assert view.value(1, 2) == pytest.approx(77.0)
+
+    view.set_value(2, 1, 88.0)
+    assert values[2, 1].item() == pytest.approx(88.0)
+
+    view.from_numpy_copy(
+        np.full((4, 3), 5.0, dtype=np.float32),
+        target=rx.Location.ALL,
+    )
+    assert torch.allclose(values, torch.full_like(values, 5.0))
+
+    with pytest.raises(ValueError, match="external memory view"):
+        view.move(rx.Location.HOST, rx.Location.DEVICE)
+
+
+def test_dense_matrix_from_torch_view_cpu_supports_col_major_memory() -> None:
+    values = torch.empty_strided((4, 3), (1, 4), dtype=torch.float32)
+    values.copy_(torch.arange(12, dtype=torch.float32).reshape(4, 3))
+    view = rx.DenseMatrix.from_torch_view(values, order="col_major")
+
+    assert view.is_view
+    assert view.order == "col_major"
+    tensor = view.to_torch(rx.Location.HOST)
+    assert tensor.stride() == (1, 4)
+
+    view.set_value(3, 2, 44.0)
+    assert values[3, 2].item() == pytest.approx(44.0)
+
+
+def test_dense_matrix_from_torch_view_rejects_noncompact_strides() -> None:
+    values = torch.arange(12, dtype=torch.float32).reshape(3, 4).t()
+    with pytest.raises(ValueError, match="compact row_major strides"):
+        rx.DenseMatrix.from_torch_view(values, order="row_major")
+
+
 def test_dense_matrix_from_dlpack_copy_cpu_keeps_rxmesh_ownership() -> None:
     source = rx.DenseMatrix(4, 3, dtype="float32", location=rx.Location.HOST)
     values = np.arange(12, dtype=np.float32).reshape(4, 3)
@@ -282,6 +329,33 @@ def test_dense_matrix_from_torch_copy_cuda_supports_row_major() -> None:
         copied.to_numpy_copy(source=rx.Location.HOST),
         np.arange(12, dtype=np.float32).reshape(4, 3),
     )
+
+
+def test_dense_matrix_from_torch_view_cuda_shares_row_major_memory() -> None:
+    values = torch.arange(12, dtype=torch.float32, device="cuda").reshape(4, 3)
+    view = rx.DenseMatrix.from_torch_view(values, order="row_major")
+
+    assert view.is_view
+    assert view.order == "row_major"
+    assert view.shape == (4, 3)
+    assert view.is_device_allocated
+    assert not view.is_host_allocated
+
+    tensor = view.to_torch()
+    assert tensor.is_cuda
+    assert tensor.stride() == (3, 1)
+    tensor[2, 1] = 77.0
+    torch.cuda.synchronize()
+    assert values[2, 1].item() == pytest.approx(77.0)
+
+    view.reset(3.0, location=rx.Location.ALL)
+    torch.cuda.synchronize()
+    assert torch.allclose(values, torch.full_like(values, 3.0))
+
+    with pytest.raises(ValueError, match="HOST allocation"):
+        view.value(0, 0)
+    with pytest.raises(ValueError, match="external memory view"):
+        view.move(rx.Location.DEVICE, rx.Location.HOST)
 
 
 def test_dense_matrix_from_torch_copy_cuda_respects_producer_stream() -> None:

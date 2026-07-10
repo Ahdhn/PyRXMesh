@@ -38,6 +38,8 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
 {
     rxmesh::locationT              allocated = rxmesh::LOCATION_NONE;
     std::shared_ptr<PyDenseMatrix> base_owner;
+    std::shared_ptr<void>          external_owner;
+    bool                           external_view = false;
 
     virtual ~PyDenseMatrix() = default;
 
@@ -64,6 +66,10 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
     bool is_device_allocated() const
     {
         return (allocated & rxmesh::DEVICE) == rxmesh::DEVICE;
+    }
+    bool is_view() const
+    {
+        return external_view;
     }
 
     // Allocation lifecycle
@@ -168,6 +174,13 @@ struct PyDenseMatrixT final : PyDenseMatrix
               rxmesh::locationT target,
               cudaStream_t      stream) override
     {
+        if (external_view) {
+            if (source == target && has_location(source)) {
+                return;
+            }
+            throw std::invalid_argument(
+                "DenseMatrix.move() cannot move an external memory view.");
+        }
         matrix->move(source, target, stream);
         allocated = static_cast<rxmesh::locationT>(static_cast<int>(allocated) |
                                                    static_cast<int>(target));
@@ -184,11 +197,18 @@ struct PyDenseMatrixT final : PyDenseMatrix
     // Value ops
     void reset(py::object value, int location, cudaStream_t stream) override
     {
-        matrix->reset(value.cast<T>(), parse_location(location), stream);
+        matrix->reset(value.cast<T>(),
+                      requested_location(location, "DenseMatrix.reset()"),
+                      stream);
     }
 
     void fill_random(double low, double high) override
     {
+        if (external_view) {
+            throw std::invalid_argument(
+                "DenseMatrix.fill_random() cannot fill an external memory "
+                "view.");
+        }
         matrix->fill_random(low, high);
     }
 
@@ -254,7 +274,13 @@ struct PyDenseMatrixT final : PyDenseMatrix
                          int          target,
                          cudaStream_t stream) override
     {
-        const auto dst = parse_location(target);
+        const auto dst =
+            requested_location(target, "DenseMatrix.from_numpy_copy()");
+        if (external_view && dst != rxmesh::HOST) {
+            throw std::invalid_argument(
+                "DenseMatrix.from_numpy_copy() on an external memory view "
+                "requires HOST storage.");
+        }
 
         py::array_t<T, py::array::c_style | py::array::forcecast> typed(values);
         const py::buffer_info info = typed.request();
@@ -286,8 +312,9 @@ struct PyDenseMatrixT final : PyDenseMatrix
                 "DenseMatrix.copy_from() requires exactly matching dtype/order "
                 "matrices.");
         }
-        const auto src = parse_location(source);
-        const auto dst = parse_location(target);
+        const auto src =
+            typed->requested_location(source, "DenseMatrix.copy_from()");
+        const auto dst = requested_location(target, "DenseMatrix.copy_from()");
         matrix->copy_from(*typed->matrix, src, dst, stream);
         allocated = static_cast<rxmesh::locationT>(static_cast<int>(allocated) |
                                                    static_cast<int>(dst));
@@ -300,6 +327,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
             throw std::invalid_argument(
                 "DenseMatrix.norm2() supports float32 and float64.");
         } else {
+            require_device_allocation("DenseMatrix.norm2()");
             return py::cast(matrix->norm2(stream));
         }
     }
@@ -310,6 +338,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
             throw std::invalid_argument(
                 "DenseMatrix.abs_sum() supports float32 and float64.");
         } else {
+            require_device_allocation("DenseMatrix.abs_sum()");
             return py::cast(matrix->abs_sum(stream));
         }
     }
@@ -320,6 +349,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
             throw std::invalid_argument(
                 "DenseMatrix.abs_max() supports float32 and float64.");
         } else {
+            require_device_allocation("DenseMatrix.abs_max()");
             return py::cast(matrix->abs_max(stream));
         }
     }
@@ -330,6 +360,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
             throw std::invalid_argument(
                 "DenseMatrix.abs_min() supports float32 and float64.");
         } else {
+            require_device_allocation("DenseMatrix.abs_min()");
             return py::cast(matrix->abs_min(stream));
         }
     }
@@ -350,6 +381,8 @@ struct PyDenseMatrixT final : PyDenseMatrix
                 throw std::invalid_argument(
                     "DenseMatrix.dot() requires matching dtype and shape.");
             }
+            require_device_allocation("DenseMatrix.dot()");
+            typed->require_device_allocation("DenseMatrix.dot()");
             return py::cast(matrix->dot(*typed->matrix, false, stream));
         }
     }
@@ -365,6 +398,8 @@ struct PyDenseMatrixT final : PyDenseMatrix
                 throw std::invalid_argument(
                     "DenseMatrix.axpy() requires matching dtype and order.");
             }
+            require_device_allocation("DenseMatrix.axpy()");
+            typed->require_device_allocation("DenseMatrix.axpy()");
             matrix->axpy(*typed->matrix, alpha.cast<T>(), stream);
         }
     }
@@ -375,6 +410,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
             throw std::invalid_argument(
                 "DenseMatrix.multiply() supports float32 and float64.");
         } else {
+            require_device_allocation("DenseMatrix.multiply()");
             matrix->multiply(scalar.cast<T>(), stream);
         }
     }
@@ -390,6 +426,8 @@ struct PyDenseMatrixT final : PyDenseMatrix
                 throw std::invalid_argument(
                     "DenseMatrix.swap() requires matching dtype and order.");
             }
+            require_device_allocation("DenseMatrix.swap()");
+            typed->require_device_allocation("DenseMatrix.swap()");
             matrix->swap(*typed->matrix, stream);
         }
     }
@@ -397,6 +435,11 @@ struct PyDenseMatrixT final : PyDenseMatrix
     // Shape / view ops
     void reshape(int new_rows, int new_cols) override
     {
+        if (external_view) {
+            throw std::invalid_argument(
+                "DenseMatrix.reshape() cannot reshape an external memory "
+                "view.");
+        }
         if (new_rows <= 0 || new_cols <= 0 ||
             new_rows * new_cols != rows() * cols()) {
             throw std::invalid_argument(
@@ -410,6 +453,10 @@ struct PyDenseMatrixT final : PyDenseMatrix
         if (column < 0 || column >= cols()) {
             throw std::out_of_range(
                 "DenseMatrix.col() column is out of range.");
+        }
+        if (external_view) {
+            throw std::invalid_argument(
+                "DenseMatrix.col() cannot slice an external memory view.");
         }
         if constexpr (Order == Eigen::RowMajor) {
             throw std::invalid_argument(
@@ -426,6 +473,10 @@ struct PyDenseMatrixT final : PyDenseMatrix
 
     std::shared_ptr<PyDenseMatrix> segment(int start, int count) override
     {
+        if (external_view) {
+            throw std::invalid_argument(
+                "DenseMatrix.segment() cannot slice an external memory view.");
+        }
         if (start < 0 || count < 0 || start + count > rows() * cols()) {
             throw std::out_of_range(
                 "DenseMatrix.segment() range is out of bounds.");
@@ -454,6 +505,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
 
     T read_value(py::object row_or_handle, int col)
     {
+        require_host_allocation("DenseMatrix.value()");
         if (py::isinstance<py::int_>(row_or_handle)) {
             return (*matrix)(validate_row(row_or_handle.cast<int>()), col);
         }
@@ -472,6 +524,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
 
     void write_value(py::object row_or_handle, int col, T value)
     {
+        require_host_allocation("DenseMatrix.set_value()");
         if (py::isinstance<py::int_>(row_or_handle)) {
             (*matrix)(validate_row(row_or_handle.cast<int>()), col) = value;
             return;
@@ -490,6 +543,47 @@ struct PyDenseMatrixT final : PyDenseMatrix
         }
         throw py::type_error(
             "DenseMatrix row must be an int or RXMesh handle.");
+    }
+
+    bool has_location(rxmesh::locationT location) const
+    {
+        const int requested = static_cast<int>(location);
+        return (requested & ~static_cast<int>(allocated)) == 0;
+    }
+
+    rxmesh::locationT requested_location(int         location,
+                                         const char* api_name) const
+    {
+        const auto loc = parse_location(location);
+        if (!external_view) {
+            return loc;
+        }
+        if (loc == rxmesh::LOCATION_ALL) {
+            return allocated;
+        }
+        if (!has_location(loc)) {
+            throw std::invalid_argument(
+                std::string(api_name) +
+                " requested a location that is not present in the external "
+                "memory view.");
+        }
+        return loc;
+    }
+
+    void require_host_allocation(const char* api_name) const
+    {
+        if (!is_host_allocated()) {
+            throw std::invalid_argument(std::string(api_name) +
+                                        " requires HOST allocation.");
+        }
+    }
+
+    void require_device_allocation(const char* api_name) const
+    {
+        if (!is_device_allocated()) {
+            throw std::invalid_argument(std::string(api_name) +
+                                        " requires DEVICE allocation.");
+        }
     }
 };
 
