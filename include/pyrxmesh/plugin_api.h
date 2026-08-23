@@ -13,8 +13,8 @@
 #include "rxmesh/attribute.h"
 #include "rxmesh/context.h"
 #include "rxmesh/handle.h"
-#include "rxmesh/kernels/query_kernel.cuh"
 #include "rxmesh/rxmesh_static.h"
+#include "rxmesh/util/log.h"
 
 #ifndef PYRXMESH_PLUGIN_ABI_VERSION
 #define PYRXMESH_PLUGIN_ABI_VERSION 2
@@ -59,12 +59,8 @@ struct MeshCapsule
     const char*            build_config;
     rxmesh::RXMeshStatic*  mesh;
     const rxmesh::Context* context;
-    void (*prepare_launch_box)(rxmesh::RXMeshStatic* mesh,
-                               rxmesh::Op            op,
-                               uint32_t              block_threads,
-                               const void*           kernel,
-                               bool                  oriented,
-                               void*                 launch_box);
+    int                    cuda_device_id;
+    int                    log_level;
 };
 
 struct AttributeCapsule
@@ -75,16 +71,6 @@ struct AttributeCapsule
     DType                  dtype;
     uint32_t               num_attributes;
     rxmesh::AttributeBase* attribute;
-};
-
-struct PluginLaunchBox
-{
-    uint32_t blocks                   = 0;
-    uint32_t num_threads              = 0;
-    uint32_t num_registers_per_thread = 0;
-    size_t   smem_bytes_dyn           = 0;
-    size_t   smem_bytes_static        = 0;
-    size_t   local_mem_per_thread     = 0;
 };
 
 template <typename T>
@@ -137,16 +123,26 @@ struct element_kind_of<rxmesh::FaceHandle>
 
 inline void ensure_abi(const uint32_t abi_version, const char* build_config)
 {
+    const std::string plugin_config(PYRXMESH_BUILD_CONFIG);
+    const std::string object_config =
+        build_config ? std::string(build_config) : std::string("<null>");
     if (abi_version != PYRXMESH_PLUGIN_ABI_VERSION) {
-        throw std::runtime_error("PyRXMesh plugin ABI mismatch: plugin ABI " +
-                                 std::to_string(PYRXMESH_PLUGIN_ABI_VERSION) +
-                                 ", object ABI " + std::to_string(abi_version));
+        throw std::runtime_error(
+            "PyRXMesh plugin ABI mismatch: plugin ABI (expected) " +
+            std::to_string(PYRXMESH_PLUGIN_ABI_VERSION) +
+            ", runtime object ABI (actual) " + std::to_string(abi_version) +
+            ". Plugin build config: '" + plugin_config +
+            "'. Runtime object build config: '" + object_config +
+            "'. Rebuild the plugin against the installed pyrxmesh package.");
     }
 
-    if (std::string(build_config) != std::string(PYRXMESH_BUILD_CONFIG)) {
+    if (object_config != plugin_config) {
         throw std::runtime_error(
-            "PyRXMesh build configuration mismatch. Rebuild the plugin against "
-            "the installed pyrxmesh package.");
+            "PyRXMesh build configuration mismatch. Plugin build config "
+            "(expected): '" +
+            plugin_config + "'. Runtime object build config (actual): '" +
+            object_config +
+            "'. Rebuild the plugin against the installed pyrxmesh package.");
     }
 }
 
@@ -160,7 +156,69 @@ inline py::object capsule_from(py::handle object)
     return object.attr("__rxmesh_capsule__")();
 }
 
-inline MeshCapsule* mesh_capsule(py::handle object)
+namespace detail {
+
+inline void synchronize_plugin_logger(const int runtime_log_level)
+{
+    if (runtime_log_level < static_cast<int>(spdlog::level::trace) ||
+        runtime_log_level > static_cast<int>(spdlog::level::off)) {
+        throw std::runtime_error(
+            "PyRXMesh mesh capsule contains an invalid log level.");
+    }
+
+    // RXMesh's header-only logging singleton can have a distinct copy in an
+    // external plugin. Query-launch diagnostics run in this module, so give
+    // that copy a logger and mirror the active PyRXMesh runtime level.
+    auto&      plugin_logger  = rxmesh::Log::get_logger();
+    const auto default_logger = spdlog::default_logger();
+    if (!plugin_logger) {
+        plugin_logger = default_logger;
+    }
+    if (!plugin_logger) {
+        throw std::runtime_error(
+            "Could not initialize the RXMesh logger for a PyRXMesh plugin.");
+    }
+
+    // Preserve an explicit plugin-local logger (for example a diagnostic
+    // capture sink). Only the fallback default logger mirrors runtime level.
+    if (plugin_logger == default_logger) {
+        const auto level =
+            static_cast<spdlog::level::level_enum>(runtime_log_level);
+        plugin_logger->set_level(level);
+    }
+}
+
+class cuda_device_guard
+{
+   public:
+    explicit cuda_device_guard(const int device_id)
+    {
+        CUDA_ERROR(cudaGetDevice(&previous_device_));
+        if (previous_device_ != device_id) {
+            CUDA_ERROR(cudaSetDevice(device_id));
+            restore_ = true;
+        }
+    }
+
+    cuda_device_guard(const cuda_device_guard&)            = delete;
+    cuda_device_guard& operator=(const cuda_device_guard&) = delete;
+
+    ~cuda_device_guard()
+    {
+        if (restore_) {
+            // Do not mask an exception from launch preparation or launch.
+            CUDA_ERROR(cudaSetDevice(previous_device_));
+        }
+    }
+
+   private:
+    int  previous_device_ = 0;
+    bool restore_         = false;
+};
+
+}  // namespace detail
+
+inline MeshCapsule mesh_capsule(py::handle object)
 {
     py::object capsule = capsule_from(object);
     auto*      data    = static_cast<MeshCapsule*>(
@@ -169,10 +227,16 @@ inline MeshCapsule* mesh_capsule(py::handle object)
         throw py::error_already_set();
     }
     ensure_abi(data->abi_version, data->build_config);
-    return data;
+
+    // __rxmesh_capsule__() returns a fresh capsule whose destructor owns this
+    // payload. Copy it while the capsule is alive instead of returning a
+    // pointer that is freed at the end of this function.
+    const MeshCapsule result = *data;
+    detail::synchronize_plugin_logger(result.log_level);
+    return result;
 }
 
-inline AttributeCapsule* attribute_capsule(py::handle object)
+inline AttributeCapsule attribute_capsule(py::handle object)
 {
     py::object capsule = capsule_from(object);
     auto*      data    = static_cast<AttributeCapsule*>(
@@ -181,26 +245,33 @@ inline AttributeCapsule* attribute_capsule(py::handle object)
         throw py::error_already_set();
     }
     ensure_abi(data->abi_version, data->build_config);
-    return data;
+
+    // Keep no pointer to payload memory owned by the temporary capsule.
+    return *data;
 }
 
 inline rxmesh::RXMeshStatic& mesh(py::handle object)
 {
-    MeshCapsule* data = mesh_capsule(object);
-    if (!data->mesh) {
+    const MeshCapsule data = mesh_capsule(object);
+    if (!data.mesh) {
         throw std::runtime_error("PyRXMesh mesh capsule contains a null mesh.");
     }
-    return *data->mesh;
+    return *data.mesh;
 }
 
 inline const rxmesh::Context& context(py::handle object)
 {
-    MeshCapsule* data = mesh_capsule(object);
-    if (!data->context) {
+    const MeshCapsule data = mesh_capsule(object);
+    if (!data.context) {
         throw std::runtime_error(
             "PyRXMesh mesh capsule contains a null context.");
     }
-    return *data->context;
+    return *data.context;
+}
+
+inline int mesh_cuda_device_id(py::handle object)
+{
+    return mesh_capsule(object).cuda_device_id;
 }
 
 template <rxmesh::Op op, uint32_t blockThreads, typename LambdaT>
@@ -209,44 +280,34 @@ void for_each(py::handle    mesh_object,
               const bool    oriented = false,
               cudaStream_t  stream   = NULL)
 {
-    MeshCapsule* data = mesh_capsule(mesh_object);
-    if (!data->mesh || !data->context || !data->prepare_launch_box) {
-        throw std::runtime_error(
-            "PyRXMesh mesh capsule is missing query-launch data.");
+    const MeshCapsule data = mesh_capsule(mesh_object);
+    if (!data.mesh) {
+        throw std::runtime_error("PyRXMesh mesh capsule contains a null mesh.");
     }
 
-    PluginLaunchBox launch_box;
-    data->prepare_launch_box(
-        data->mesh,
-        op,
-        blockThreads,
-        reinterpret_cast<const void*>(
-            rxmesh::detail::query_kernel<blockThreads, op, LambdaT>),
-        oriented,
-        &launch_box);
+    const detail::cuda_device_guard device_guard(data.cuda_device_id);
 
-    rxmesh::detail::query_kernel<blockThreads, op, LambdaT>
-        <<<launch_box.blocks,
-           launch_box.num_threads,
-           launch_box.smem_bytes_dyn,
-           stream>>>(*data->context, oriented, user_lambda);
+    // Instantiate preparation and launch in the plugin translation unit so
+    // RXMesh inspects the exact query_kernel specialization containing
+    // LambdaT instead of a runtime-side dummy specialization.
+    data.mesh->for_each<op, blockThreads>(user_lambda, oriented, stream);    
 }
 
 template <typename T, typename HandleT>
 rxmesh::Attribute<T, HandleT>& attribute(py::handle object)
 {
-    AttributeCapsule* data = attribute_capsule(object);
-    if (data->dtype != dtype_of<T>::value) {
+    const AttributeCapsule data = attribute_capsule(object);
+    if (data.dtype != dtype_of<T>::value) {
         throw std::runtime_error("PyRXMesh attribute dtype mismatch.");
     }
-    if (data->element_kind != element_kind_of<HandleT>::value) {
+    if (data.element_kind != element_kind_of<HandleT>::value) {
         throw std::runtime_error("PyRXMesh attribute element kind mismatch.");
     }
-    if (!data->attribute) {
+    if (!data.attribute) {
         throw std::runtime_error(
             "PyRXMesh attribute capsule contains a null attribute.");
     }
-    return *static_cast<rxmesh::Attribute<T, HandleT>*>(data->attribute);
+    return *static_cast<rxmesh::Attribute<T, HandleT>*>(data.attribute);
 }
 
 template <typename T>
@@ -273,15 +334,40 @@ inline std::string runtime_build_config()
     return pyrxmesh.attr("build_config_tag")().cast<std::string>();
 }
 
-inline void require_compatible_runtime()
+inline void require_compatible_runtime(uint32_t           plugin_abi,
+                                       const std::string& plugin)
 {
+    py::module_    pyrxmesh = py::module_::import("pyrxmesh");
+    const uint32_t runtime_abi =
+        pyrxmesh.attr("abi_version")().cast<uint32_t>();
     const std::string runtime = runtime_build_config();
-    if (runtime != std::string(PYRXMESH_BUILD_CONFIG)) {
+    if (runtime_abi != plugin_abi || runtime != plugin) {
         throw std::runtime_error(
             "This PyRXMesh plugin was built against a different "
-            "RXMesh/PyRXMesh configuration. Rebuild the plugin in the active "
-            "environment.");
+            "RXMesh/PyRXMesh runtime. Plugin ABI (compiled/expected): " +
+            std::to_string(plugin_abi) +
+            "; runtime ABI (active/actual): " + std::to_string(runtime_abi) +
+            ". Plugin build config (expected): '" + plugin +
+            "'. Runtime build config (actual): '" + runtime +
+            "'. Rebuild the plugin in the active environment.");
     }
+
+    // RXMesh's header-only logging singleton can have one copy per DLL. Give
+    // plugin-side inline template code a harmless fallback logger now. That
+    // fallback mirrors the active runtime level before query launch; an
+    // explicitly installed plugin-local logger is preserved.
+    // Do not call Log::init(), which would open another RXMesh.log and can
+    // register a duplicate logger name.
+    auto& plugin_logger = rxmesh::Log::get_logger();
+    if (!plugin_logger) {
+        plugin_logger = spdlog::default_logger();
+    }
+}
+
+inline void require_compatible_runtime()
+{
+    require_compatible_runtime(PYRXMESH_PLUGIN_ABI_VERSION,
+                               std::string(PYRXMESH_BUILD_CONFIG));
 }
 
 inline void require_compatible_runtime(py::module_&)
