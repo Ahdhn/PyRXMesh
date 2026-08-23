@@ -2,7 +2,7 @@
 
 Most PyRXMesh workflows should stay in Python. Custom CUDA plugins are for the parts of RXMesh that require C++/CUDA device lambdas.
 
-The intended workflow is to keep orchestration and data management in Python, and put only the hot RXMesh lambda code in a small compiled plugin package.
+The intended workflow is to keep orchestration and data management in Python, and put only the RXMesh lambda code in a small compiled plugin package.
 
 ## Creating a Plugin Package
 
@@ -26,6 +26,8 @@ my_kernels/
 ```
 
 The generated plugin builds against the `pyrxmesh` package installed in the active Python environment. It reuses the RXMesh headers and library installed with PyRXMesh, so plugin builds should compile only the plugin code instead of rebuilding RXMesh. The plugin also checks the PyRXMesh/RXMesh build configuration at runtime.
+
+External plugins must discover the installed PyRXMesh CMake package and create their extension with `pyrxmesh_add_plugin`. Build the plugin in `Release` mode with the same host compiler and CUDA toolchain used by the installed runtime.
 
 After `pip install`, `my_kernels` is in your environment's site-packages and importable from any directory, exactly like `pyrxmesh` itself.
 
@@ -68,7 +70,18 @@ pyrxmesh::for_each<Op::EV, 256>(
     });
 ```
 
-Use `pyrxmesh::for_each` for RXMesh query operations from plugin modules. It delegates launch-box preparation to the installed PyRXMesh runtime and then launches the plugin's CUDA lambda without an extra Python data copy.
+The supported custom launch surface is `pyrxmesh::for_each` with an RXMesh device lambda. The wrapper unwraps the Python mesh and delegates to `RXMeshStatic::for_each`. RXMesh prepares the launch for the actual `rxmesh::detail::query_kernel<blockThreads, op, LambdaT>` specialization, so its shared-memory, register, and occupancy diagnostics describe the plugin lambda that will run. Attribute and mesh storage remain in place; the launch does not add a Python-side data copy.
+
+Each `pyrxmesh::for_each` call represents one RXMesh query operation. Compose an algorithm that needs multiple operations as multiple lambda launches on the same CUDA stream (or omit the stream argument on every call to use the same default stream):
+
+```cpp
+pyrxmesh::for_each<Op::EV, 256>(
+    mesh_obj, ev_lambda, false, stream);
+pyrxmesh::for_each<Op::FV, 256>(
+    mesh_obj, fv_lambda, false, stream);
+```
+
+CUDA stream ordering sequences the operations without an intervening host synchronization. Any raw `cudaStream_t` supplied to `pyrxmesh::for_each` must belong to the mesh's CUDA device. Launches are asynchronous, so the mesh and every attribute or other storage captured by a lambda must remain alive until the launch has completed on that stream.
 
 ## Examples
 
