@@ -39,5 +39,3 @@ pyrxmesh::for_each<Op::EV, 256>(
         out(eh) = (a - b).norm();
     });
 ```
-One call represents one query operation. A plugin that needs multiple operations makes multiple lambda `pyrxmesh::for_each` calls and supplies the same CUDA stream to each call (or consistently uses the default stream). CUDA stream ordering then sequences those launches without a host synchronization. Any supplied raw `cudaStream_t` must belong to the mesh's CUDA device. Launches
-are asynchronous, so the mesh and every attribute or other storage captured by the lambda must remain alive until the launch has completed on that stream.
