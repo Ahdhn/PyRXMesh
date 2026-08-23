@@ -4,7 +4,7 @@ channels:
 dependencies:
   - python=3.12
   - pip
-  - cmake>=3.24,<4
+  - cmake>=3.25,<4
   - ninja
   - git
   - numpy>=1.26
