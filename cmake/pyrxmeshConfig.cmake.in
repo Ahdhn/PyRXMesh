@@ -79,6 +79,7 @@ function(pyrxmesh_add_plugin target)
         CUDA_SEPARABLE_COMPILATION ON
         CUDA_RESOLVE_DEVICE_SYMBOLS ON
     )
+    rxmesh_enable_cuda_device_lto(${target})
     if(WIN32)
         target_compile_definitions(${target}
             PRIVATE _USE_MATH_DEFINES

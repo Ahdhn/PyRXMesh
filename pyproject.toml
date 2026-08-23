@@ -34,7 +34,7 @@ pyrxmesh-plugin = "pyrxmesh.plugin:main"
 
 [tool.scikit-build]
 minimum-version = "0.12"
-cmake.version = ">=3.24,<4"
+cmake.version = ">=3.25,<4"
 cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
 wheel.packages = ["pyrxmesh"]
@@ -42,27 +42,52 @@ build.targets = ["_rxmesh"]
 install.components = ["python"]
 
 sdist.include = [
-    "CMakeLists.txt",
-    "LICENSE",
-    "README.md",
-    "DEVELOPING.md",
-    "CUSTOM_CUDA_PLUGINS.md",
+    "examples/custom_kernel_plugin/CMakeLists.txt",
+    "examples/custom_kernel_plugin/README.md",
+    "examples/custom_kernel_plugin/pyproject.toml",
+    "examples/custom_kernel_plugin/run_edge_lengths.py",
+    "examples/custom_kernel_plugin/src/rxmesh_edge_lengths.cu",
+    "examples/custom_kernel_plugin/src/rxmesh_edge_lengths_tests.cu",
+    "examples/custom_kernel_plugin/src/rxmesh_edge_lengths/__init__.py",
+    "examples/diff_energy_plugin/CMakeLists.txt",
+    "examples/diff_energy_plugin/README.md",
+    "examples/diff_energy_plugin/pyproject.toml",
+    "examples/diff_energy_plugin/run_diff_energy.py",
+    "examples/diff_energy_plugin/src/rxmesh_diff_energy.cu",
+    "examples/diff_energy_plugin/src/rxmesh_diff_energy/__init__.py",
+    "/CMakeLists.txt",
+    "/LICENSE",
+    "/README.md",
+    "/DEVELOPING.md",
+    "/CUSTOM_CUDA_PLUGINS.md",
+    "/DIFFERENTIABLE_ENERGY_PLUGINS.md",
+    "benchmarks/**",
     "cmake/**",
     "include/**",
     "meshes/**",
     "pyrxmesh/**",
     "src/**",
     "tests/**",
+    "!**/build/**",
+    "!**/dist/**",
+    "!**/.pytest_cache/**",
+    "!**/__pycache__/**",
+    "!**/*.pyc",
+    "!**/*.pyo",
+    "!**/*.pyd",
+    "!**/*.log",
 ]
 sdist.exclude = [
+    "**/build/**",
+    "**/dist/**",
     ".github/**",
-    ".pytest_cache/**",
+    "**/.pytest_cache/**",
     ".vscode/**",
     "**/__pycache__/**",
     "**/*.pyc",
+    "**/*.pyo",
+    "**/*.pyd",
     "**/*.log",
-    "build/**",
-    "examples/custom_kernel_plugin/build/**",
 ]
 
 [tool.scikit-build.cmake.define]

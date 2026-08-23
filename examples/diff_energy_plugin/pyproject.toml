@@ -6,9 +6,9 @@ requires = [
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "rxmesh-edge-lengths"
+name = "rxmesh-diff-energy"
 version = "0.1.0"
-description = "Example PyRXMesh custom CUDA kernel plugin"
+description = "Example PyRXMesh differentiable energy plugin"
 requires-python = ">=3.10"
 dependencies = [
     "PyRXMesh",
@@ -19,6 +19,6 @@ minimum-version = "0.12"
 cmake.version = ">=3.25,<4"
 cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
-wheel.packages = ["src/rxmesh_edge_lengths"]
-build.targets = ["_rxmesh_edge_lengths"]
+wheel.packages = ["src/rxmesh_diff_energy"]
+build.targets = ["_rxmesh_diff_energy"]
 install.components = ["python"]

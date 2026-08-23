@@ -4,7 +4,7 @@ if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
     set(CMAKE_CUDA_ARCHITECTURES native)
 endif()
 
-project(rxmesh_edge_lengths LANGUAGES C CXX CUDA)
+project(rxmesh_diff_energy LANGUAGES C CXX CUDA)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
@@ -23,9 +23,9 @@ execute_process(
 
 find_package(pyrxmesh CONFIG REQUIRED PATHS "${pyrxmesh_DIR}" NO_DEFAULT_PATH)
 
-pyrxmesh_add_plugin(_rxmesh_edge_lengths src/rxmesh_edge_lengths.cu src/rxmesh_edge_lengths_tests.cu)
+pyrxmesh_add_plugin(_rxmesh_diff_energy src/rxmesh_diff_energy.cu)
 
-install(TARGETS _rxmesh_edge_lengths
-    LIBRARY DESTINATION rxmesh_edge_lengths COMPONENT python
-    RUNTIME DESTINATION rxmesh_edge_lengths COMPONENT python
+install(TARGETS _rxmesh_diff_energy
+    LIBRARY DESTINATION rxmesh_diff_energy COMPONENT python
+    RUNTIME DESTINATION rxmesh_diff_energy COMPONENT python
 )
