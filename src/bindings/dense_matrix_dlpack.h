@@ -82,12 +82,14 @@ inline py::capsule dense_matrix_to_dlpack(std::shared_ptr<PyDenseMatrix> self,
             "DenseMatrix.to_dlpack() requires an existing DEVICE allocation.");
     }
 
+    int device_id = 0;
     if (loc == rxmesh::HOST) {
         if (!stream.is_none()) {
             throw std::invalid_argument(
                 "DenseMatrix.to_dlpack(Location.HOST) requires stream=None.");
         }
     } else {
+        CUDA_ERROR(cudaGetDevice(&device_id));
         dlpack_util::synchronize_export_stream(std::move(stream));
     }
 
@@ -108,11 +110,6 @@ inline py::capsule dense_matrix_to_dlpack(std::shared_ptr<PyDenseMatrix> self,
         } else {
             context->strides[0] = 1;
             context->strides[1] = mat.rows();
-        }
-
-        int device_id = 0;
-        if (loc == rxmesh::DEVICE) {
-            CUDA_ERROR(cudaGetDevice(&device_id));
         }
 
         managed->dl_tensor.data   = mat.data(loc);
