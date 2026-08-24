@@ -86,19 +86,6 @@ inline void cuda_stream_synchronize_arg(py::object stream)
     CUDA_ERROR(cudaStreamSynchronize(parse_cuda_stream_arg(std::move(stream))));
 }
 
-inline void make_stream_wait_for_legacy_default(cudaStream_t stream)
-{
-    using namespace rxmesh;
-    if (stream == nullptr) {
-        return;
-    }
-    cudaEvent_t event = nullptr;
-    CUDA_ERROR(cudaEventCreateWithFlags(&event, cudaEventDisableTiming));
-    CUDA_ERROR(cudaEventRecord(event, nullptr));
-    CUDA_ERROR(cudaStreamWaitEvent(stream, event, 0));
-    CUDA_ERROR(cudaEventDestroy(event));
-}
-
 inline void synchronize_device_transfer(rxmesh::locationT source,
                                         rxmesh::locationT target)
 {
@@ -160,6 +147,7 @@ void register_geometry(py::module_& m);
 void register_sparse_matrix(py::module_& m);
 void register_solvers(py::module_& m);
 void register_mesh(py::module_& m);
+void register_diff_energy(py::module_& m);
 
 
 py::object make_sparse_matrix_from_mesh(
