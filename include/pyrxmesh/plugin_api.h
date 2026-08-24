@@ -15,6 +15,7 @@
 #include "rxmesh/handle.h"
 #include "rxmesh/rxmesh_static.h"
 #include "rxmesh/util/log.h"
+#include "rxmesh/util/macros.h"
 
 #ifndef PYRXMESH_PLUGIN_ABI_VERSION
 #define PYRXMESH_PLUGIN_ABI_VERSION 2
@@ -43,24 +44,15 @@ enum class DType : uint32_t
     Float32 = 1,
     Float64 = 2,
     Int8    = 3,
-    UInt8   = 4,
-    Int16   = 5,
-    UInt16  = 6,
     Int32   = 7,
-    UInt32  = 8,
-    Int64   = 9,
-    UInt64  = 10,
-
 };
 
 struct MeshCapsule
 {
-    uint32_t               abi_version;
-    const char*            build_config;
-    rxmesh::RXMeshStatic*  mesh;
-    const rxmesh::Context* context;
-    int                    cuda_device_id;
-    int                    log_level;
+    uint32_t              abi_version;
+    const char*           build_config;
+    rxmesh::RXMeshStatic* mesh;
+    int                   log_level;
 };
 
 struct AttributeCapsule
@@ -69,7 +61,6 @@ struct AttributeCapsule
     const char*            build_config;
     ElementKind            element_kind;
     DType                  dtype;
-    uint32_t               num_attributes;
     rxmesh::AttributeBase* attribute;
 };
 
@@ -135,7 +126,6 @@ inline void ensure_abi(const uint32_t abi_version, const char* build_config)
             "'. Runtime object build config: '" + object_config +
             "'. Rebuild the plugin against the installed pyrxmesh package.");
     }
-
     if (object_config != plugin_config) {
         throw std::runtime_error(
             "PyRXMesh build configuration mismatch. Plugin build config "
@@ -160,61 +150,16 @@ namespace detail {
 
 inline void synchronize_plugin_logger(const int runtime_log_level)
 {
-    if (runtime_log_level < static_cast<int>(spdlog::level::trace) ||
-        runtime_log_level > static_cast<int>(spdlog::level::off)) {
-        throw std::runtime_error(
-            "PyRXMesh mesh capsule contains an invalid log level.");
-    }
-
-    // RXMesh's header-only logging singleton can have a distinct copy in an
-    // external plugin. Query-launch diagnostics run in this module, so give
-    // that copy a logger and mirror the active PyRXMesh runtime level.
-    auto&      plugin_logger  = rxmesh::Log::get_logger();
-    const auto default_logger = spdlog::default_logger();
+    // Header-only RXMesh code in a plugin can have its own logger singleton.
+    auto& plugin_logger = rxmesh::Log::get_logger();
     if (!plugin_logger) {
-        plugin_logger = default_logger;
+        plugin_logger = spdlog::default_logger();
     }
-    if (!plugin_logger) {
-        throw std::runtime_error(
-            "Could not initialize the RXMesh logger for a PyRXMesh plugin.");
-    }
-
-    // Preserve an explicit plugin-local logger (for example a diagnostic
-    // capture sink). Only the fallback default logger mirrors runtime level.
-    if (plugin_logger == default_logger) {
-        const auto level =
-            static_cast<spdlog::level::level_enum>(runtime_log_level);
-        plugin_logger->set_level(level);
+    if (plugin_logger == spdlog::default_logger()) {
+        plugin_logger->set_level(
+            static_cast<spdlog::level::level_enum>(runtime_log_level));
     }
 }
-
-class cuda_device_guard
-{
-   public:
-    explicit cuda_device_guard(const int device_id)
-    {
-        CUDA_ERROR(cudaGetDevice(&previous_device_));
-        if (previous_device_ != device_id) {
-            CUDA_ERROR(cudaSetDevice(device_id));
-            restore_ = true;
-        }
-    }
-
-    cuda_device_guard(const cuda_device_guard&)            = delete;
-    cuda_device_guard& operator=(const cuda_device_guard&) = delete;
-
-    ~cuda_device_guard()
-    {
-        if (restore_) {
-            // Do not mask an exception from launch preparation or launch.
-            CUDA_ERROR(cudaSetDevice(previous_device_));
-        }
-    }
-
-   private:
-    int  previous_device_ = 0;
-    bool restore_         = false;
-};
 
 }  // namespace detail
 
@@ -227,10 +172,6 @@ inline MeshCapsule mesh_capsule(py::handle object)
         throw py::error_already_set();
     }
     ensure_abi(data->abi_version, data->build_config);
-
-    // __rxmesh_capsule__() returns a fresh capsule whose destructor owns this
-    // payload. Copy it while the capsule is alive instead of returning a
-    // pointer that is freed at the end of this function.
     const MeshCapsule result = *data;
     detail::synchronize_plugin_logger(result.log_level);
     return result;
@@ -245,8 +186,6 @@ inline AttributeCapsule attribute_capsule(py::handle object)
         throw py::error_already_set();
     }
     ensure_abi(data->abi_version, data->build_config);
-
-    // Keep no pointer to payload memory owned by the temporary capsule.
     return *data;
 }
 
@@ -261,36 +200,18 @@ inline rxmesh::RXMeshStatic& mesh(py::handle object)
 
 inline const rxmesh::Context& context(py::handle object)
 {
-    const MeshCapsule data = mesh_capsule(object);
-    if (!data.context) {
-        throw std::runtime_error(
-            "PyRXMesh mesh capsule contains a null context.");
-    }
-    return *data.context;
-}
-
-inline int mesh_cuda_device_id(py::handle object)
-{
-    return mesh_capsule(object).cuda_device_id;
+    return mesh(object).get_context();
 }
 
 template <rxmesh::Op op, uint32_t blockThreads, typename LambdaT>
 void for_each(py::handle    mesh_object,
               const LambdaT user_lambda,
               const bool    oriented = false,
-              cudaStream_t  stream   = NULL)
+              cudaStream_t  stream   = nullptr)
 {
-    const MeshCapsule data = mesh_capsule(mesh_object);
-    if (!data.mesh) {
-        throw std::runtime_error("PyRXMesh mesh capsule contains a null mesh.");
-    }
-
-    const detail::cuda_device_guard device_guard(data.cuda_device_id);
-
-    // Instantiate preparation and launch in the plugin translation unit so
-    // RXMesh inspects the exact query_kernel specialization containing
-    // LambdaT instead of a runtime-side dummy specialization.
-    data.mesh->for_each<op, blockThreads>(user_lambda, oriented, stream);    
+    mesh(mesh_object).for_each<op, blockThreads>(user_lambda, oriented, stream);
+    using namespace rxmesh;
+    CUDA_ERROR(cudaGetLastError());
 }
 
 template <typename T, typename HandleT>
@@ -328,36 +249,26 @@ rxmesh::FaceAttribute<T>& face_attribute(py::handle object)
     return attribute<T, rxmesh::FaceHandle>(object);
 }
 
-inline std::string runtime_build_config()
-{
-    py::module_ pyrxmesh = py::module_::import("pyrxmesh");
-    return pyrxmesh.attr("build_config_tag")().cast<std::string>();
-}
-
 inline void require_compatible_runtime(uint32_t           plugin_abi,
-                                       const std::string& plugin)
+                                       const std::string& plugin_config)
 {
     py::module_    pyrxmesh = py::module_::import("pyrxmesh");
     const uint32_t runtime_abi =
         pyrxmesh.attr("abi_version")().cast<uint32_t>();
-    const std::string runtime = runtime_build_config();
-    if (runtime_abi != plugin_abi || runtime != plugin) {
+    const std::string runtime_config =
+        pyrxmesh.attr("build_config_tag")().cast<std::string>();
+    if (runtime_abi != plugin_abi || runtime_config != plugin_config) {
         throw std::runtime_error(
             "This PyRXMesh plugin was built against a different "
             "RXMesh/PyRXMesh runtime. Plugin ABI (compiled/expected): " +
             std::to_string(plugin_abi) +
             "; runtime ABI (active/actual): " + std::to_string(runtime_abi) +
-            ". Plugin build config (expected): '" + plugin +
-            "'. Runtime build config (actual): '" + runtime +
+            ". Plugin build config (expected): '" + plugin_config +
+            "'. Runtime build config (actual): '" + runtime_config +
             "'. Rebuild the plugin in the active environment.");
     }
 
-    // RXMesh's header-only logging singleton can have one copy per DLL. Give
-    // plugin-side inline template code a harmless fallback logger now. That
-    // fallback mirrors the active runtime level before query launch; an
-    // explicitly installed plugin-local logger is preserved.
-    // Do not call Log::init(), which would open another RXMesh.log and can
-    // register a duplicate logger name.
+    // Give inline RXMesh code in this plugin a harmless fallback logger.
     auto& plugin_logger = rxmesh::Log::get_logger();
     if (!plugin_logger) {
         plugin_logger = spdlog::default_logger();
