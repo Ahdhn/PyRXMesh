@@ -11,27 +11,8 @@
 
 namespace pyrxmesh_py {
 
-enum class ElementKind : uint32_t
-{
-    Vertex = static_cast<uint32_t>(pyrxmesh::ElementKind::Vertex),
-    Edge   = static_cast<uint32_t>(pyrxmesh::ElementKind::Edge),
-    Face   = static_cast<uint32_t>(pyrxmesh::ElementKind::Face),
-};
-
-enum class DType : uint32_t
-{
-    Float32 = static_cast<uint32_t>(pyrxmesh::DType::Float32),
-    Float64 = static_cast<uint32_t>(pyrxmesh::DType::Float64),
-    Int8    = static_cast<uint32_t>(pyrxmesh::DType::Int8),
-    UInt8   = static_cast<uint32_t>(pyrxmesh::DType::UInt8),
-    Int16   = static_cast<uint32_t>(pyrxmesh::DType::Int16),
-    UInt16  = static_cast<uint32_t>(pyrxmesh::DType::UInt16),
-    Int32   = static_cast<uint32_t>(pyrxmesh::DType::Int32),
-    UInt32  = static_cast<uint32_t>(pyrxmesh::DType::UInt32),
-    Int64   = static_cast<uint32_t>(pyrxmesh::DType::Int64),
-    UInt64  = static_cast<uint32_t>(pyrxmesh::DType::UInt64),
-
-};
+using ElementKind = pyrxmesh::ElementKind;
+using DType       = pyrxmesh::DType;
 
 
 template <typename>
@@ -41,31 +22,9 @@ struct always_false : std::false_type
 
 
 template <typename T>
-DType dtype_for()
+constexpr DType dtype_for()
 {
-    if constexpr (std::is_same_v<T, float>) {
-        return DType::Float32;
-    } else if constexpr (std::is_same_v<T, double>) {
-        return DType::Float64;
-    } else if constexpr (std::is_same_v<T, int8_t>) {
-        return DType::Int8;
-    } else if constexpr (std::is_same_v<T, uint8_t>) {
-        return DType::UInt8;
-    } else if constexpr (std::is_same_v<T, int16_t>) {
-        return DType::Int16;
-    } else if constexpr (std::is_same_v<T, uint16_t>) {
-        return DType::UInt16;
-    } else if constexpr (std::is_same_v<T, int32_t>) {
-        return DType::Int32;
-    } else if constexpr (std::is_same_v<T, uint32_t>) {
-        return DType::UInt32;
-    } else if constexpr (std::is_same_v<T, int64_t>) {
-        return DType::Int64;
-    } else if constexpr (std::is_same_v<T, uint64_t>) {
-        return DType::UInt64;
-    } else {
-        static_assert(always_false<T>::value, "Unsupported PyRXMesh dtype");
-    }
+    return pyrxmesh::dtype_of<T>::value;
 }
 
 template <typename T>
@@ -83,20 +42,9 @@ const char* dense_dtype_name()
 }
 
 template <typename HandleT>
-ElementKind element_kind_for()
+constexpr ElementKind element_kind_for()
 {
-    using namespace rxmesh;
-
-    if constexpr (std::is_same_v<HandleT, VertexHandle>) {
-        return ElementKind::Vertex;
-    } else if constexpr (std::is_same_v<HandleT, EdgeHandle>) {
-        return ElementKind::Edge;
-    } else if constexpr (std::is_same_v<HandleT, FaceHandle>) {
-        return ElementKind::Face;
-    } else {
-        static_assert(always_false<HandleT>::value,
-                      "Unsupported PyRXMesh element kind");
-    }
+    return pyrxmesh::element_kind_of<HandleT>::value;
 }
 
 inline DType parse_dtype(const std::string& dtype)
