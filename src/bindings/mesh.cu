@@ -45,76 +45,22 @@ auto linear_id_of(rxmesh::RXMeshStatic& mesh, HandleT h)
     return mesh.linear_id(h);
 }
 
-struct ElementOrderMaps
+template <bool LinearToGlobal, typename HandleT>
+py::array_t<uint32_t> element_order_map_typed(rxmesh::RXMeshStatic& mesh)
 {
-    std::vector<uint32_t> linear_to_global;
-    std::vector<uint32_t> global_to_linear;
-};
-
-template <typename HandleT>
-ElementOrderMaps build_element_order_maps(rxmesh::RXMeshStatic& mesh)
-{
-    const uint32_t     count   = mesh.get_num_elements<HandleT>();
-    constexpr uint32_t invalid = std::numeric_limits<uint32_t>::max();
-    ElementOrderMaps   maps{std::vector<uint32_t>(count, invalid),
-                          std::vector<uint32_t>(count, invalid)};
-
-    if (count == 0) {
-        return maps;
-    }
-
-    // Keep duplicate validation deterministic and race-free. These maps are
-    // normally created only once
+    py::array_t<uint32_t> out(
+        static_cast<py::ssize_t>(mesh.get_num_elements<HandleT>()));
+    uint32_t* values = out.mutable_data();
     mesh.for_each<HandleT>(
         rxmesh::HOST,
         [&](const HandleT h) {
             const uint32_t linear = mesh.linear_id(h);
             const uint32_t global = mesh.map_to_global(h);
-
-            if (linear >= count || global >= count) {
-                throw std::runtime_error(
-                    "RXMesh element ordering contains an out-of-range ID.");
-            }
-            if (maps.linear_to_global[linear] != invalid) {
-                throw std::runtime_error(
-                    "RXMesh element ordering contains a duplicate linear ID.");
-            }
-            if (maps.global_to_linear[global] != invalid) {
-                throw std::runtime_error(
-                    "RXMesh element ordering contains a duplicate global ID.");
-            }
-
-            maps.linear_to_global[linear] = global;
-            maps.global_to_linear[global] = linear;
+            values[LinearToGlobal ? linear : global] =
+                LinearToGlobal ? global : linear;
         },
         nullptr,
         false);
-
-    if (std::find(maps.linear_to_global.begin(),
-                  maps.linear_to_global.end(),
-                  invalid) != maps.linear_to_global.end() ||
-        std::find(maps.global_to_linear.begin(),
-                  maps.global_to_linear.end(),
-                  invalid) != maps.global_to_linear.end()) {
-        throw std::runtime_error(
-            "RXMesh element ordering did not populate every element ID.");
-    }
-
-    return maps;
-}
-
-template <bool LinearToGlobal, typename HandleT>
-py::array_t<uint32_t> element_order_map_typed(rxmesh::RXMeshStatic& mesh)
-{
-    const ElementOrderMaps maps = build_element_order_maps<HandleT>(mesh);
-
-    const auto& values =
-        LinearToGlobal ? maps.linear_to_global : maps.global_to_linear;
-
-    py::array_t<uint32_t> out(static_cast<py::ssize_t>(values.size()));
-    if (!values.empty()) {
-        std::copy(values.begin(), values.end(), out.mutable_data());
-    }
     return out;
 }
 
@@ -139,38 +85,37 @@ py::array_t<uint32_t> element_order_map(rxmesh::RXMeshStatic& mesh,
     }
 }
 
-py::array vertices(rxmesh::RXMeshStatic& mesh)
+bool use_global_order(const std::string& order)
 {
-    auto attr = mesh.get_input_vertex_coordinates();
-    
-    py::array_t<rx_coord_t> out(
-        {static_cast<py::ssize_t>(attr->rows()), static_cast<py::ssize_t>(3)});
-    auto view = out.mutable_unchecked<2>();
-
-    for (uint32_t i = 0; i < attr->rows(); ++i) {
-        for (uint32_t j = 0; j < 3; ++j) {
-            view(i, j) = (*attr)(i, j);
-        }
+    if (order == "linear") {
+        return false;
     }
+    if (order == "global") {
+        return true;
+    }
+    throw std::invalid_argument("order must be 'linear' or 'global'");
+}
+
+py::array_t<rx_coord_t> vertices(const rxmesh::RXMeshStatic& mesh,
+                                 const std::string&          order)
+{
+    const bool global_order = use_global_order(order);
+
+    py::array_t<rx_coord_t> out(
+        {static_cast<py::ssize_t>(mesh.get_num_vertices()),
+         static_cast<py::ssize_t>(3)});
+    mesh.get_input_vertex_coordinates(out.mutable_data(), global_order);
     return out;
 }
 
-py::array_t<uint32_t> faces(const rxmesh::RXMeshStatic& mesh)
+py::array_t<uint32_t> faces(const rxmesh::RXMeshStatic& mesh,
+                            const std::string&          order)
 {
-    std::vector<glm::uvec3> face_list;
-    mesh.create_face_list(face_list);
+    const bool global_order = use_global_order(order);
 
-    py::array_t<uint32_t> out({static_cast<py::ssize_t>(face_list.size()),
+    py::array_t<uint32_t> out({static_cast<py::ssize_t>(mesh.get_num_faces()),
                                static_cast<py::ssize_t>(3)});
-    auto                  view = out.mutable_unchecked<2>();
-
-    for (py::ssize_t i = 0; i < static_cast<py::ssize_t>(face_list.size());
-         ++i) {
-        const auto& face = face_list[static_cast<size_t>(i)];
-        view(i, 0)       = face[0];
-        view(i, 1)       = face[1];
-        view(i, 2)       = face[2];
-    }
+    mesh.create_face_list(out.mutable_data(), global_order);
     return out;
 }
 
@@ -320,12 +265,14 @@ void register_mesh(py::module_& m)
             "Return the input vertex coordinate attribute.")
         .def("vertices",
              &vertices,
-             "Return a NumPy copy of the input coordinates with rows in "
-             "RXMesh linear vertex order.")
+             py::arg("order") = "linear",
+             "Return input coordinates in RXMesh linear or global row "
+             "order.")
         .def("faces",
              &faces,
-             "Return faces in RXMesh linear face-row order, containing "
-             "RXMesh linear vertex IDs.")
+             py::arg("order") = "linear",
+             "Return faces in RXMesh linear or global order. The selected "
+             "order applies to both face rows and vertex IDs.")
         .def("bounding_box",
              &bounding_box,
              "Return (lower, upper) NumPy arrays for the mesh bounding box.")
