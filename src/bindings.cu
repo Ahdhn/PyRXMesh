@@ -16,4 +16,5 @@ PYBIND11_MODULE(_rxmesh, m)
     pyrxmesh_py::register_sparse_matrix(m);
     pyrxmesh_py::register_solvers(m);
     pyrxmesh_py::register_mesh(m);
+    pyrxmesh_py::register_diff_energy(m);
 }
