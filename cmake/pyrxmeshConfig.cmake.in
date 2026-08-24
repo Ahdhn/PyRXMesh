@@ -72,7 +72,6 @@ function(pyrxmesh_add_plugin target)
         $<$<COMPILE_LANGUAGE:CUDA>:--ptxas-options=-v>
     )
     target_compile_definitions(${target}
-        PRIVATE PYRXMESH_PLUGIN_ABI_VERSION=${PYRXMESH_PLUGIN_ABI_VERSION}
         PRIVATE PYRXMESH_BUILD_CONFIG="${PYRXMESH_BUILD_CONFIG_TAG}"
     )
     set_target_properties(${target} PROPERTIES

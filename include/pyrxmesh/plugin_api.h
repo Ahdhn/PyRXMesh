@@ -18,7 +18,7 @@
 #include "rxmesh/util/macros.h"
 
 #ifndef PYRXMESH_PLUGIN_ABI_VERSION
-#define PYRXMESH_PLUGIN_ABI_VERSION 2
+#error "PYRXMESH_PLUGIN_ABI_VERSION must be provided by the PyRXMesh CMake target"
 #endif
 
 #ifndef PYRXMESH_BUILD_CONFIG
