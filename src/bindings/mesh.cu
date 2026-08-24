@@ -45,11 +45,104 @@ auto linear_id_of(rxmesh::RXMeshStatic& mesh, HandleT h)
     return mesh.linear_id(h);
 }
 
+struct ElementOrderMaps
+{
+    std::vector<uint32_t> linear_to_global;
+    std::vector<uint32_t> global_to_linear;
+};
+
+template <typename HandleT>
+ElementOrderMaps build_element_order_maps(rxmesh::RXMeshStatic& mesh)
+{
+    const uint32_t     count   = mesh.get_num_elements<HandleT>();
+    constexpr uint32_t invalid = std::numeric_limits<uint32_t>::max();
+    ElementOrderMaps   maps{std::vector<uint32_t>(count, invalid),
+                          std::vector<uint32_t>(count, invalid)};
+
+    if (count == 0) {
+        return maps;
+    }
+
+    // Keep duplicate validation deterministic and race-free. These maps are
+    // normally created only once
+    mesh.for_each<HandleT>(
+        rxmesh::HOST,
+        [&](const HandleT h) {
+            const uint32_t linear = mesh.linear_id(h);
+            const uint32_t global = mesh.map_to_global(h);
+
+            if (linear >= count || global >= count) {
+                throw std::runtime_error(
+                    "RXMesh element ordering contains an out-of-range ID.");
+            }
+            if (maps.linear_to_global[linear] != invalid) {
+                throw std::runtime_error(
+                    "RXMesh element ordering contains a duplicate linear ID.");
+            }
+            if (maps.global_to_linear[global] != invalid) {
+                throw std::runtime_error(
+                    "RXMesh element ordering contains a duplicate global ID.");
+            }
+
+            maps.linear_to_global[linear] = global;
+            maps.global_to_linear[global] = linear;
+        },
+        nullptr,
+        false);
+
+    if (std::find(maps.linear_to_global.begin(),
+                  maps.linear_to_global.end(),
+                  invalid) != maps.linear_to_global.end() ||
+        std::find(maps.global_to_linear.begin(),
+                  maps.global_to_linear.end(),
+                  invalid) != maps.global_to_linear.end()) {
+        throw std::runtime_error(
+            "RXMesh element ordering did not populate every element ID.");
+    }
+
+    return maps;
+}
+
+template <bool LinearToGlobal, typename HandleT>
+py::array_t<uint32_t> element_order_map_typed(rxmesh::RXMeshStatic& mesh)
+{
+    const ElementOrderMaps maps = build_element_order_maps<HandleT>(mesh);
+
+    const auto& values =
+        LinearToGlobal ? maps.linear_to_global : maps.global_to_linear;
+
+    py::array_t<uint32_t> out(static_cast<py::ssize_t>(values.size()));
+    if (!values.empty()) {
+        std::copy(values.begin(), values.end(), out.mutable_data());
+    }
+    return out;
+}
+
+template <bool LinearToGlobal>
+py::array_t<uint32_t> element_order_map(rxmesh::RXMeshStatic& mesh,
+                                        ElementKind           kind)
+{
+    switch (kind) {
+        case ElementKind::Vertex:
+            return element_order_map_typed<LinearToGlobal,
+                                           rxmesh::VertexHandle>(mesh);
+        case ElementKind::Edge:
+            return element_order_map_typed<LinearToGlobal, rxmesh::EdgeHandle>(
+                mesh);
+        case ElementKind::Face:
+            return element_order_map_typed<LinearToGlobal, rxmesh::FaceHandle>(
+                mesh);
+        default:
+            throw std::invalid_argument(
+                "Element order map requires ElementKind.Vertex, Edge, or "
+                "Face.");
+    }
+}
+
 py::array vertices(rxmesh::RXMeshStatic& mesh)
 {
     auto attr = mesh.get_input_vertex_coordinates();
-    ensure_host_readable(*attr);
-
+    
     py::array_t<rx_coord_t> out(
         {static_cast<py::ssize_t>(attr->rows()), static_cast<py::ssize_t>(3)});
     auto view = out.mutable_unchecked<2>();
@@ -148,7 +241,8 @@ void register_mesh(py::module_& m)
 {
     using namespace rxmesh;
 
-    py::class_<RXMeshStatic, std::shared_ptr<RXMeshStatic>>(m, "RXMeshStatic")
+    py::class_<RXMeshStatic, std::shared_ptr<RXMeshStatic>>(
+        m, "RXMeshStatic", py::dynamic_attr())
         .def(py::init<const std::string,
                       const std::string,
                       const uint32_t,
@@ -226,10 +320,12 @@ void register_mesh(py::module_& m)
             "Return the input vertex coordinate attribute.")
         .def("vertices",
              &vertices,
-             "Return input vertex coordinates as a NumPy array copy.")
+             "Return a NumPy copy of the input coordinates with rows in "
+             "RXMesh linear vertex order.")
         .def("faces",
              &faces,
-             "Return face vertex indices as a NumPy uint32 array.")
+             "Return faces in RXMesh linear face-row order, containing "
+             "RXMesh linear vertex IDs.")
         .def("bounding_box",
              &bounding_box,
              "Return (lower, upper) NumPy arrays for the mesh bounding box.")
@@ -262,6 +358,16 @@ void register_mesh(py::module_& m)
         .def("linear_id", &linear_id_of<VertexHandle>, py::arg("handle"))
         .def("linear_id", &linear_id_of<EdgeHandle>, py::arg("handle"))
         .def("linear_id", &linear_id_of<FaceHandle>, py::arg("handle"))
+        .def("linear_to_global",
+             &element_order_map<true>,
+             py::arg("element_kind"),
+             "Return an owned uint32 map from RXMesh linear row IDs to "
+             "map_to_global() IDs for the requested element kind.")
+        .def("global_to_linear",
+             &element_order_map<false>,
+             py::arg("element_kind"),
+             "Return an owned uint32 inverse map from map_to_global() IDs "
+             "to RXMesh linear row IDs for the requested element kind.")
         .def("add_vertex_attribute",
              &add_typed_attribute<VertexHandle>,
              py::arg("name"),
