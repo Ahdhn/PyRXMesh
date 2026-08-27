@@ -15,6 +15,35 @@ namespace pyrxmesh_py {
 template <typename T, typename HandleT>
 using AttrPtr = std::shared_ptr<rxmesh::Attribute<T, HandleT>>;
 
+template <typename T, typename HandleT>
+__global__ static void copy_device_attribute_to_row_major_kernel(
+    rxmesh::Context               context,
+    rxmesh::Attribute<T, HandleT> attr,
+    T*                            destination,
+    const uint32_t                rows,
+    const uint32_t                cols)
+{
+    uint64_t index = uint64_t(blockIdx.x) * uint64_t(blockDim.x) + threadIdx.x;
+    const uint64_t count  = uint64_t(rows) * uint64_t(cols);
+    const uint64_t stride = uint64_t(gridDim.x) * uint64_t(blockDim.x);
+    for (; index < count; index += stride) {
+        const uint32_t row    = static_cast<uint32_t>(index / cols);
+        const uint32_t col    = static_cast<uint32_t>(index % cols);
+        const HandleT  handle = context.template get_handle<HandleT>(row);
+        destination[index]    = attr(handle, col);
+    }
+}
+
+struct cuda_free_deleter
+{
+    void operator()(void* pointer) const noexcept
+    {
+        if (pointer) {
+            (void)cudaFree(pointer);
+        }
+    }
+};
+
 template <typename T>
 inline constexpr bool is_attribute_matrix_copy_type_v =
     std::is_same_v<T, float> || std::is_same_v<T, double> ||
@@ -292,19 +321,61 @@ struct PyAttribute final : PyAttributeBase
                 "Attribute.to_numpy_copy() source must be Location.HOST or "
                 "Location.DEVICE.");
         }
+        py::array_t<T> out({static_cast<py::ssize_t>(attr->rows()),
+                            static_cast<py::ssize_t>(attr->cols())});
+
         if (src == rxmesh::DEVICE) {
             if (!attr->is_device_allocated()) {
                 throw std::runtime_error(
                     "Attribute.to_numpy_copy() cannot copy from DEVICE "
                     "because DEVICE is not allocated.");
             }
-        } else {
-            ensure_host_readable(*attr);
+
+            const uint32_t rows  = attr->rows();
+            const uint32_t cols  = attr->cols();
+            const uint64_t count = uint64_t(rows) * uint64_t(cols);
+            if (count == 0) {
+                return out;
+            }
+            if (count > std::numeric_limits<size_t>::max() / sizeof(T)) {
+                throw std::overflow_error(
+                    "Attribute.to_numpy_copy() result is too large.");
+            }
+
+            using namespace rxmesh;
+
+            // The API has no producer-stream argument. A device-wide barrier
+            // is required before gathering so writes from nonblocking CUDA
+            // streams are visible in the blocking host result.
+            CUDA_ERROR(cudaDeviceSynchronize());
+
+            // since this _copy API, we don't just move data from device to host
+            // since this might change the host attribute. We rather allocate a
+            // temp buffer on the device, populate the temp device buffer, then
+            // move it to the host buffer which we return.
+            // This also cover the case where the attribute is only allocated on
+            // the device
+            T* compact = nullptr;
+            CUDA_ERROR(
+                cudaMalloc(&compact, static_cast<size_t>(count) * sizeof(T)));
+            std::unique_ptr<void, cuda_free_deleter> compact_owner(compact);
+
+            constexpr uint32_t threads    = 256;
+            constexpr uint32_t max_blocks = 65535;
+            const uint32_t blocks = static_cast<uint32_t>(std::min<uint64_t>(
+                (count + threads - 1) / threads, max_blocks));
+            copy_device_attribute_to_row_major_kernel<T, HandleT>
+                <<<blocks, threads>>>(
+                    mesh_owner->get_context(), *attr, compact, rows, cols);
+            CUDA_ERROR(cudaGetLastError());
+            CUDA_ERROR(cudaMemcpy(out.mutable_data(),
+                                  compact,
+                                  static_cast<size_t>(count) * sizeof(T),
+                                  cudaMemcpyDeviceToHost));
+            return out;
         }
 
-
-        py::array_t<T> out({static_cast<py::ssize_t>(attr->rows()),
-                            static_cast<py::ssize_t>(attr->cols())});
+        ensure_host_readable(*attr);
 
         auto view = out.template mutable_unchecked<2>();
 
@@ -449,8 +520,7 @@ struct PyAttribute final : PyAttributeBase
             static_cast<uint32_t>(element_kind()));
         capsule_data->dtype =
             static_cast<pyrxmesh::DType>(static_cast<uint32_t>(dtype()));
-        capsule_data->num_attributes = dim();
-        capsule_data->attribute      = attr.get();
+        capsule_data->attribute = attr.get();
 
         return py::capsule(capsule_data,
                            pyrxmesh::attribute_capsule_name,
