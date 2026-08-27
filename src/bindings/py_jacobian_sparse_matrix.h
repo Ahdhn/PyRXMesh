@@ -36,9 +36,9 @@ inline std::vector<rxmesh::BlockShape> parse_block_shapes(
 template <typename T>
 struct PyJacobianSparseMatrix : PySparseMatrixT<T>
 {
-    using NativeT = rxmesh::JacobianSparseMatrix<T>;
+    using JacT = rxmesh::JacobianSparseMatrix<T>;
 
-    std::shared_ptr<NativeT> jacobian;
+    std::shared_ptr<JacT> jacobian;
 
     PyJacobianSparseMatrix(std::shared_ptr<rxmesh::RXMeshStatic> mesh,
                            std::vector<rxmesh::Op>               ops,
@@ -54,7 +54,7 @@ struct PyJacobianSparseMatrix : PySparseMatrixT<T>
                 "JacobianSparseMatrix requires one block shape per op.");
         }
 
-        jacobian = std::make_shared<NativeT>(*mesh, ops, parsed_block_shapes);
+        jacobian = std::make_shared<JacT>(*mesh, ops, parsed_block_shapes);
 
         this->matrix =
             std::static_pointer_cast<rxmesh::SparseMatrix<T>>(jacobian);

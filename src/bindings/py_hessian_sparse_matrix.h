@@ -29,13 +29,13 @@ inline void validate_hessian_inputs(std::shared_ptr<rxmesh::RXMeshStatic> mesh,
 template <typename T, int K>
 struct PyHessianSparseMatrix : PySparseMatrixT<T>
 {
-    using NativeT = rxmesh::HessianSparseMatrix<T, K>;
+    using HessT = rxmesh::HessianSparseMatrix<T, K>;
 
-    std::shared_ptr<NativeT> hessian;
+    std::shared_ptr<HessT> hessian;
 
     PyHessianSparseMatrix(std::shared_ptr<rxmesh::RXMeshStatic> mesh,
-                          int                                   extra_nnz_entries,
-                          rxmesh::Op                            op)
+                          int        extra_nnz_entries,
+                          rxmesh::Op op)
     {
         if (!mesh) {
             throw std::invalid_argument(
@@ -46,7 +46,7 @@ struct PyHessianSparseMatrix : PySparseMatrixT<T>
                 "HessianSparseMatrix extra_nnz_entries must be non-negative.");
         }
 
-        hessian = std::make_shared<NativeT>(*mesh, extra_nnz_entries, op);
+        hessian = std::make_shared<HessT>(*mesh, extra_nnz_entries, op);
 
         this->matrix =
             std::static_pointer_cast<rxmesh::SparseMatrix<T>>(hessian);
