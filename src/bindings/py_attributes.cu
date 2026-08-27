@@ -86,13 +86,19 @@ void require_attribute_tensor_view(const PyAttributeBase& self,
 
 py::capsule attribute_to_dlpack(std::shared_ptr<PyAttributeBase> self,
                                 int                              location,
-                                py::object)
+                                py::object                       stream)
 {
     const auto loc = parse_location(location);
     require_attribute_tensor_view(*self, loc, "Attribute.to_dlpack()");
 
+    int device_id = 0;
     if (loc == rxmesh::DEVICE) {
-        CUDA_ERROR(cudaStreamSynchronize(nullptr));
+        using namespace rxmesh;
+        CUDA_ERROR(cudaGetDevice(&device_id));
+        dlpack_util::synchronize_export_stream(std::move(stream));
+    } else if (!stream.is_none()) {
+        throw std::invalid_argument(
+            "Attribute.to_dlpack(Location.HOST) requires stream=None.");
     }
 
     auto* managed  = new dlpack::DLManagedTensor();
@@ -103,11 +109,6 @@ py::capsule attribute_to_dlpack(std::shared_ptr<PyAttributeBase> self,
     context->shape[1]   = context->owner->dim();
     context->strides[0] = 1;
     context->strides[1] = context->owner->element_count();
-
-    int device_id = 0;
-    if (loc == rxmesh::DEVICE) {
-        CUDA_ERROR(cudaGetDevice(&device_id));
-    }
 
     managed->dl_tensor.data   = context->owner->data_ptr(loc);
     managed->dl_tensor.device = {
@@ -417,22 +418,25 @@ void register_attribute(py::module_& m)
                 return self->to_numpy(location, py::cast(self));
             },
             py::arg("location") = static_cast<int>(rxmesh::HOST),
-            "Return a zero-copy NumPy view of true Layout.SoA HOST memory.")
+            "Return a zero-copy NumPy view of true Layout.SoA HOST memory "
+            "with rows in RXMesh linear element order.")
         .def("to_numpy_copy",
              &PyAttributeBase::to_numpy_copy,
              py::arg("source") = static_cast<int>(rxmesh::HOST),
-             "Copy this attribute to a NumPy array in input/global element "
-             "order.")
+             "Copy this attribute to a NumPy array with rows in RXMesh "
+             "linear element order.")
         .def("from_numpy_copy",
              &PyAttributeBase::from_numpy_copy,
              py::arg("values"),
              py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
-             "Copy a NumPy-compatible array into RXMesh attribute memory.")
+             "Copy a NumPy-compatible array in RXMesh linear element order "
+             "into attribute memory.")
         .def("from_dlpack_copy",
              &attribute_from_dlpack_copy,
              py::arg("source"),
              py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
-             "Copy a CPU or CUDA DLPack tensor into RXMesh attribute memory.")
+             "Copy a CPU or CUDA DLPack tensor in RXMesh linear element "
+             "order into attribute memory.")
         .def("to_matrix_copy",
              &PyAttributeBase::to_matrix_copy,
              "Copy this attribute into a DenseMatrix using RXMesh handle "
@@ -452,7 +456,8 @@ void register_attribute(py::module_& m)
             },
             py::arg("location") = static_cast<int>(rxmesh::DEVICE),
             py::arg("stream")   = py::none(),
-            "Return a DLPack capsule that views true Layout.SoA RXMesh memory.")
+            "Return a DLPack capsule that views true Layout.SoA RXMesh "
+            "memory in linear element order.")
         .def(
             "__dlpack__",
             [](std::shared_ptr<PyAttributeBase> self, py::object stream) {

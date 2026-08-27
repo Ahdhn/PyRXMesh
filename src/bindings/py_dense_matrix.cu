@@ -43,6 +43,7 @@ void register_dense_matrix(py::module_& m)
         .def_property_readonly("is_device_allocated",
                                &PyDenseMatrix::is_device_allocated)
         .def_property_readonly("is_view", &PyDenseMatrix::is_view)
+        .def_property_readonly("is_read_only", &PyDenseMatrix::is_read_only)
         .def(
             "move",
             [](PyDenseMatrix& self, int source, int target, py::object stream) {

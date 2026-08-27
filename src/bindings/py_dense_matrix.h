@@ -40,6 +40,7 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
     std::shared_ptr<PyDenseMatrix> base_owner;
     std::shared_ptr<void>          external_owner;
     bool                           external_view = false;
+    bool                           read_only     = false;
 
     virtual ~PyDenseMatrix() = default;
 
@@ -70,6 +71,19 @@ struct PyDenseMatrix : std::enable_shared_from_this<PyDenseMatrix>
     bool is_view() const
     {
         return external_view;
+    }
+    bool is_read_only() const
+    {
+        return read_only;
+    }
+
+    void require_writable(const char* api_name) const
+    {
+        if (read_only) {
+            throw std::invalid_argument(std::string(api_name) +
+                                        " cannot mutate a read-only "
+                                        "DenseMatrix view.");
+        }
     }
 
     // Allocation lifecycle
@@ -135,15 +149,19 @@ struct PyDenseMatrixT final : PyDenseMatrix
     PyDenseMatrixT() = default;
 
     PyDenseMatrixT(std::shared_ptr<MatT> in_matrix, rxmesh::locationT location)
+        : matrix(std::move(in_matrix))
     {
-        matrix    = std::move(in_matrix);
         allocated = location;
     }
 
     ~PyDenseMatrixT() override
     {
-        if (matrix) {
-            matrix->release(rxmesh::LOCATION_ALL);
+        try {
+            if (matrix) {
+                matrix->release(rxmesh::LOCATION_ALL);
+            }
+        } catch (...) {
+            // Native destructors cannot surface CUDA teardown errors safely.
         }
     }
 
@@ -174,6 +192,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
               rxmesh::locationT target,
               cudaStream_t      stream) override
     {
+        require_writable("DenseMatrix.move()");
         if (external_view) {
             if (source == target && has_location(source)) {
                 return;
@@ -188,6 +207,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
 
     void release(int location) override
     {
+        require_writable("DenseMatrix.release()");
         const auto loc = parse_location(location);
         matrix->release(loc);
         allocated = static_cast<rxmesh::locationT>(static_cast<int>(allocated) &
@@ -197,6 +217,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
     // Value ops
     void reset(py::object value, int location, cudaStream_t stream) override
     {
+        require_writable("DenseMatrix.reset()");
         matrix->reset(value.cast<T>(),
                       requested_location(location, "DenseMatrix.reset()"),
                       stream);
@@ -204,6 +225,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
 
     void fill_random(double low, double high) override
     {
+        require_writable("DenseMatrix.fill_random()");
         if (external_view) {
             throw std::invalid_argument(
                 "DenseMatrix.fill_random() cannot fill an external memory "
@@ -221,6 +243,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
                    int        col,
                    py::object value_obj) override
     {
+        require_writable("DenseMatrix.set_value()");
         write_value(row_or_handle, col, value_obj.cast<T>());
     }
 
@@ -245,10 +268,14 @@ struct PyDenseMatrixT final : PyDenseMatrix
             sizeof(T) * (Order == Eigen::RowMajor ? c : 1));
         const py::ssize_t stride1 = static_cast<py::ssize_t>(
             sizeof(T) * (Order == Eigen::RowMajor ? 1 : r));
-        return py::array_t<T>({r, c},
-                              {stride0, stride1},
-                              matrix->data(rxmesh::HOST),
-                              py::cast(owner));
+        py::array out = py::array_t<T>({r, c},
+                                       {stride0, stride1},
+                                       matrix->data(rxmesh::HOST),
+                                       py::cast(owner));
+        if (read_only) {
+            out.attr("setflags")(py::arg("write") = false);
+        }
+        return out;
     }
 
     py::array to_numpy_copy(int source) override
@@ -274,6 +301,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
                          int          target,
                          cudaStream_t stream) override
     {
+        require_writable("DenseMatrix.from_numpy_copy()");
         const auto dst =
             requested_location(target, "DenseMatrix.from_numpy_copy()");
         if (external_view && dst != rxmesh::HOST) {
@@ -306,6 +334,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
                    int            target,
                    cudaStream_t   stream) override
     {
+        require_writable("DenseMatrix.copy_from()");
         auto* typed = dynamic_cast<PyDenseMatrixT<T, Order>*>(&other);
         if (!typed) {
             throw std::invalid_argument(
@@ -389,6 +418,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
 
     void axpy(PyDenseMatrix& x, py::object alpha, cudaStream_t stream) override
     {
+        require_writable("DenseMatrix.axpy()");
         if constexpr (std::is_same_v<T, int32_t>) {
             throw std::invalid_argument(
                 "DenseMatrix.axpy() supports float32 and float64.");
@@ -406,6 +436,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
 
     void multiply(py::object scalar, cudaStream_t stream) override
     {
+        require_writable("DenseMatrix.multiply()");
         if constexpr (std::is_same_v<T, int32_t>) {
             throw std::invalid_argument(
                 "DenseMatrix.multiply() supports float32 and float64.");
@@ -417,6 +448,8 @@ struct PyDenseMatrixT final : PyDenseMatrix
 
     void swap(PyDenseMatrix& other, cudaStream_t stream) override
     {
+        require_writable("DenseMatrix.swap()");
+        other.require_writable("DenseMatrix.swap()");
         if constexpr (std::is_same_v<T, int32_t>) {
             throw std::invalid_argument(
                 "DenseMatrix.swap() supports float32 and float64.");
@@ -435,6 +468,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
     // Shape / view ops
     void reshape(int new_rows, int new_cols) override
     {
+        require_writable("DenseMatrix.reshape()");
         if (external_view) {
             throw std::invalid_argument(
                 "DenseMatrix.reshape() cannot reshape an external memory "
@@ -467,6 +501,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
             auto ret  = std::make_shared<PyDenseMatrixT<T, Order>>(
                 std::move(view), allocated);
             ret->base_owner = shared_from_this();
+            ret->read_only  = read_only;
             return ret;
         }
     }
@@ -485,6 +520,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
         auto ret  = std::make_shared<PyDenseMatrixT<T, Order>>(std::move(view),
                                                               allocated);
         ret->base_owner = shared_from_this();
+        ret->read_only  = read_only;
         return ret;
     }
 
@@ -596,6 +632,15 @@ inline void validate_dense_matrix_shape(int rows, int cols)
     }
 }
 
+inline void validate_dense_matrix_shape_allow_empty_rows(int rows, int cols)
+{
+    if (rows < 0 || cols <= 0) {
+        throw std::invalid_argument(
+            "DenseMatrix rows must be non-negative and cols must be "
+            "positive.");
+    }
+}
+
 inline int parse_dense_matrix_order(const std::string& order)
 {
     if (order != "col_major" && order != "column_major" && order != "F") {
@@ -609,14 +654,19 @@ inline int parse_dense_matrix_order(const std::string& order)
     return Eigen::ColMajor;
 }
 
-inline std::shared_ptr<PyDenseMatrix> make_dense_matrix(
+inline std::shared_ptr<PyDenseMatrix> make_dense_matrix_impl(
     int                rows,
     int                cols,
     const std::string& dtype,
     int                location,
-    const std::string& order)
+    const std::string& order,
+    bool               allow_empty_rows)
 {
-    validate_dense_matrix_shape(rows, cols);
+    if (allow_empty_rows) {
+        validate_dense_matrix_shape_allow_empty_rows(rows, cols);
+    } else {
+        validate_dense_matrix_shape(rows, cols);
+    }
     const int  storage_order = parse_dense_matrix_order(order);
     const auto loc           = parse_location(location);
     return dispatch_numeric_dtype_str(
@@ -631,6 +681,26 @@ inline std::shared_ptr<PyDenseMatrix> make_dense_matrix(
             return std::make_shared<PyDenseMatrixT<T, Eigen::ColMajor>>(
                 std::make_shared<MatT>(rows, cols, loc), loc);
         });
+}
+
+inline std::shared_ptr<PyDenseMatrix> make_dense_matrix(
+    int                rows,
+    int                cols,
+    const std::string& dtype,
+    int                location,
+    const std::string& order)
+{
+    return make_dense_matrix_impl(rows, cols, dtype, location, order, false);
+}
+
+inline std::shared_ptr<PyDenseMatrix> make_dense_matrix_allow_empty_rows(
+    int                rows,
+    int                cols,
+    const std::string& dtype,
+    int                location,
+    const std::string& order)
+{
+    return make_dense_matrix_impl(rows, cols, dtype, location, order, true);
 }
 
 inline std::shared_ptr<PyDenseMatrix> make_dense_matrix_for_mesh(
