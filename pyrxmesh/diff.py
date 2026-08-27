@@ -151,6 +151,36 @@ def _stream_token(stream) -> int:
     return 1 if raw == 0 else raw
 
 
+def _run_torch_forward(energy, x, copy, with_gradient):
+    torch = _require_torch()
+    stream = torch.cuda.current_stream()
+    effective_input = _prepare_torch_input(x, copy)
+    gradient = (
+        torch.empty(
+            (energy.element_count, energy.variable_dim),
+            dtype=x.dtype,
+            device=x.device,
+        )
+        if with_gradient
+        else None
+    )
+    term_losses = torch.empty(
+        energy.term_count, dtype=x.dtype, device=x.device
+    )
+
+    # RXMesh's read is invisible to Torch's allocator. The output buffers are
+    # created and consumed on this stream, so their normal Torch ownership is
+    # sufficient.
+    effective_input.record_stream(stream)
+    energy._torch_forward(
+        effective_input.data_ptr(),
+        gradient.data_ptr() if gradient is not None else 0,
+        term_losses.data_ptr(),
+        _stream_token(stream),
+    )
+    return term_losses.sum(), gradient
+
+
 def _torch_function():
     global _TORCH_FUNCTION
     if _TORCH_FUNCTION is not None:
@@ -162,32 +192,10 @@ def _torch_function():
     class _ScalarEnergyFunction(torch.autograd.Function):
         @staticmethod
         def forward(ctx, x, energy, copy):
-            _validate_energy_input(energy, x, copy)
-            stream = torch.cuda.current_stream()
-            effective_input = _prepare_torch_input(x, copy)
-            gradient = torch.empty(
-                (energy.element_count, energy.variable_dim),
-                dtype=x.dtype,
-                device=x.device,
-            )
-            term_losses = torch.empty(
-                energy.term_count, dtype=x.dtype, device=x.device
-            )
-
-            # RXMesh's read is invisible to Torch's allocator. The output
-            # buffers are created and consumed on this stream, so their normal
-            # Torch ownership is sufficient.
-            effective_input.record_stream(stream)
-            energy._torch_forward(
-                effective_input.data_ptr(),
-                gradient.data_ptr(),
-                term_losses.data_ptr(),
-                _stream_token(stream),
-            )
-
+            loss, gradient = _run_torch_forward(energy, x, copy, True)
             ctx.save_for_backward(gradient)
             ctx.energy = energy
-            return term_losses.sum()
+            return loss
 
         @staticmethod
         @once_differentiable
@@ -206,7 +214,11 @@ def _energy_torch(self, x, *, copy="auto"):
     layout. copy='never' requires the zero-copy SoA layout.
     """
 
-    return _torch_function().apply(x, self, copy)
+    torch = _require_torch()
+    _validate_energy_input(self, x, copy)
+    if torch.is_grad_enabled() and x.requires_grad:
+        return _torch_function().apply(x, self, copy)
+    return _run_torch_forward(self, x, copy, False)[0]
 
 
 ScalarEnergy.torch = _energy_torch

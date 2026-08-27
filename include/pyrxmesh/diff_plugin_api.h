@@ -151,12 +151,16 @@ class ScalarGradientProblem final : public ScalarEnergyBase
         }
 
         try {
-            auto gradient =
-                GradientMatrixT::device_view(*mesh_owner_,
-                                             element_count(),
-                                             VariableDim,
-                                             static_cast<T*>(gradient_output));
-            problem_.eval_terms_grad_only(opt_var.get(), gradient, stream);
+            if (gradient_output == nullptr) {
+                problem_.eval_terms_passive(opt_var.get(), stream);
+            } else {
+                auto gradient = GradientMatrixT::device_view(
+                    *mesh_owner_,
+                    element_count(),
+                    VariableDim,
+                    static_cast<T*>(gradient_output));
+                problem_.eval_terms_grad_only(opt_var.get(), gradient, stream);
+            }
             problem_.get_current_loss_device(
                 static_cast<T*>(term_loss_output), term_count(), stream);
             CUDA_ERROR(cudaGetLastError());

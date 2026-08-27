@@ -141,7 +141,8 @@ void register_diff_energy(py::module_& m)
             py::arg("gradient_ptr"),
             py::arg("term_losses_ptr"),
             py::arg("stream"),
-            "Internal Torch forward into PyTorch-owned CUDA buffers.")
+            "Internal Torch forward into PyTorch-owned CUDA buffers. A zero "
+            "gradient pointer evaluates only the loss.")
         .def_property_readonly("loss", &Energy::loss_value)
         .def_property_readonly("gradient_view",
                                [](const std::shared_ptr<Energy>& self) {
