@@ -2,7 +2,7 @@
 
 This package exposes:
 
-- The native classes (``RXMeshStatic``, ``DenseMatrix``, ``SparseMatrix``,
+- The classes (``RXMeshStatic``, ``DenseMatrix``, ``SparseMatrix``,
   ``Attribute``, solvers, etc.) from the compiled ``_rxmesh`` extension.
 - Optional NumPy / SciPy / PyTorch interop methods attached to those classes
   via the ``_numpy_interop``, ``_scipy_interop``, and ``_torch_interop``
@@ -47,7 +47,8 @@ def _prepare_dll_search_path() -> None:
         if env_name.startswith("CUDA_PATH_V") and cuda_root:
             _add_windows_dll_dir(Path(cuda_root) / "bin")
 
-    default_cuda_root = Path("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA")
+    default_cuda_root = Path(
+        "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA")
     if default_cuda_root.exists():
         for cuda_bin in sorted(default_cuda_root.glob("v*/bin"), reverse=True):
             _add_windows_dll_dir(cuda_bin)
@@ -86,6 +87,7 @@ try:
         QRSolver,
         RXMeshStatic,
         LUSolver,
+        ScalarEnergy,
         SparseMatrix,
         VertexAttributeFloat32,
         VertexAttributeFloat64,
@@ -135,6 +137,7 @@ else:
         "QRSolver",
         "RXMeshStatic",
         "LUSolver",
+        "ScalarEnergy",
         "SparseMatrix",
         "VertexAttributeFloat32",
         "VertexAttributeFloat64",
@@ -157,6 +160,9 @@ else:
     from . import _numpy_interop  # noqa: F401  (side-effect: monkey-patches)
     from . import _scipy_interop  # noqa: F401  (side-effect: monkey-patches)
     from . import _torch_interop  # noqa: F401  (side-effect: monkey-patches)
+    from . import diff  # noqa: F401  (side-effect: installs energy.torch)
+
+    __all__.append("diff")
 
 
 def __getattr__(name: str):
