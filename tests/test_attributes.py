@@ -1,7 +1,7 @@
 import numpy as np
 import pyrxmesh as rx
 import pytest
-import torch 
+import torch
 
 
 def test_attribute_metadata_allocation_and_numpy_round_trip(mesh) -> None:
@@ -26,7 +26,7 @@ def test_attribute_metadata_allocation_and_numpy_round_trip(mesh) -> None:
     assert not hasattr(attr, "from_numpy")
     assert not hasattr(attr, "to_matrix")
     assert not hasattr(attr, "from_matrix")
-    
+
     assert isinstance(attr, rx.Attribute)
     assert type(attr).__name__ == "VertexAttributeFloat32"
 
@@ -38,10 +38,59 @@ def test_attribute_metadata_allocation_and_numpy_round_trip(mesh) -> None:
     np.testing.assert_allclose(copied, values)
 
     copied[:, :] = -1.0
-    np.testing.assert_allclose(attr.to_numpy_copy(source=rx.Location.HOST), values)
+    np.testing.assert_allclose(
+        attr.to_numpy_copy(
+            source=rx.Location.HOST),
+        values)
 
     attr.reset(5.0, location=rx.Location.ALL)
     np.testing.assert_allclose(attr.to_numpy_copy(source=rx.Location.HOST), 5.0)
+
+
+@pytest.mark.parametrize(
+    "layout, name",
+    (
+        (rx.Layout.SoA, "soa"),
+        (rx.Layout.AoS, "aos"),
+        (rx.Layout.AoSoA, "aosoa"),
+    ),
+)
+def test_attribute_copy_rows_are_linear_for_every_layout(
+    mesh, layout: int, name: str
+) -> None:
+    attr = mesh.add_vertex_attribute(
+        f"linear_order_{name}",
+        dtype="float32",
+        dim=3,
+        location=rx.Location.ALL,
+        layout=layout,
+    )
+    rows = np.arange(mesh.num_vertices, dtype=np.float32)
+    linear_values = np.column_stack(
+        (rows, -2.0 * rows - 0.25, 1000.0 + 3.0 * rows)
+    ).astype(np.float32)
+
+    attr.from_numpy_copy(linear_values, target=rx.Location.ALL)
+
+    np.testing.assert_array_equal(
+        attr.to_numpy_copy(source=rx.Location.HOST), linear_values
+    )
+
+    # Keep deliberately different HOST and DEVICE values. The DEVICE copy
+    # must gather from device storage without silently reading or overwriting
+    # the stale host mirror, for every RXMesh attribute layout.
+    attr.reset(-17.0, location=rx.Location.HOST)
+    np.testing.assert_array_equal(
+        attr.to_numpy_copy(source=rx.Location.DEVICE), linear_values
+    )
+    np.testing.assert_array_equal(
+        attr.to_numpy_copy(source=rx.Location.HOST),
+        np.full_like(linear_values, -17.0),
+    )
+
+    maximum_handle, maximum = attr.argmax(column=0)
+    assert mesh.linear_id(maximum_handle) == mesh.num_vertices - 1
+    assert maximum == linear_values[-1, 0]
 
 
 def test_attribute_numpy_view_zero_copy(mesh) -> None:
@@ -58,7 +107,12 @@ def test_attribute_numpy_view_zero_copy(mesh) -> None:
 
     view = attr.to_numpy(rx.Location.HOST)
     assert view.shape == (mesh.num_vertices, 3)
-    assert view.strides == (np.dtype(np.float32).itemsize, mesh.num_vertices * np.dtype(np.float32).itemsize)
+    assert view.strides == (
+        np.dtype(
+            np.float32).itemsize,
+        mesh.num_vertices *
+        np.dtype(
+            np.float32).itemsize)
     view[4, 2] = 42.0
     assert attr.to_numpy_copy(source=rx.Location.HOST)[4, 2] == 42.0
 
@@ -106,7 +160,9 @@ def test_attribute_torch_storage_view_zero_copy_host(mesh) -> None:
     assert tuple(tensor.stride()) == (1, mesh.num_vertices)
     tensor[:, :] = 13.0
 
-    np.testing.assert_allclose(attr.to_numpy_copy(source=rx.Location.HOST), 13.0)
+    np.testing.assert_allclose(
+        attr.to_numpy_copy(
+            source=rx.Location.HOST), 13.0)
 
 
 def test_attribute_torch_storage_view_zero_copy_cuda(mesh) -> None:
@@ -139,7 +195,8 @@ def test_attribute_from_torch_copy_cpu(mesh) -> None:
         location=rx.Location.ALL,
     )
 
-    values = torch.arange(mesh.num_vertices * 2, dtype=torch.float32).reshape(-1, 2)
+    values = torch.arange(mesh.num_vertices * 2,
+                          dtype=torch.float32).reshape(-1, 2)
     attr.from_torch_copy(values, target=rx.Location.ALL)
 
     np.testing.assert_allclose(
@@ -195,7 +252,9 @@ def test_attribute_like_copy_and_remove(mesh) -> None:
     values = np.arange(mesh.num_edges, dtype=np.int32).reshape(-1, 1)
     src.from_numpy_copy(values, target=rx.Location.ALL)
     dst.copy_from(src)
-    np.testing.assert_array_equal(dst.to_numpy_copy(source=rx.Location.HOST), values)
+    np.testing.assert_array_equal(
+        dst.to_numpy_copy(
+            source=rx.Location.HOST), values)
 
     mesh.remove_attribute("py_edge_dst")
     assert not mesh.has_attribute("py_edge_dst")
@@ -233,6 +292,7 @@ def test_attribute_reductions_float32(mesh) -> None:
     assert handle.is_valid()
     assert 0 <= mesh.linear_id(handle) < mesh.num_vertices
     assert value == np.min(values)
+
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__]))
