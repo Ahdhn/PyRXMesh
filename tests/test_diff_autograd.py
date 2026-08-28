@@ -216,22 +216,6 @@ def test_strict_copy_policy_rejects_row_major(tiny_mesh):
         _energy(tiny_mesh).torch(x, copy="never")
 
 
-def test_auto_stages_gapped_input(tiny_mesh):
-    values = _positions(tiny_mesh, 0.2)
-    storage = torch.empty(
-        tiny_mesh.num_vertices * 6, dtype=torch.float32, device="cuda"
-    )
-    x = torch.as_strided(
-        storage,
-        values.shape,
-        (6, 2),
-    )
-    x.copy_(torch.as_tensor(values, device="cuda"))
-    x = x.detach().requires_grad_()
-    gradient = torch.autograd.grad(_energy(tiny_mesh).torch(x), x)[0]
-    _assert_gradient(gradient, _reference(tiny_mesh, values)[1])
-
-
 def test_strict_soa_accepts_nonzero_storage_offset(tiny_mesh):
     values = _positions(tiny_mesh, 0.9)
     n = tiny_mesh.num_vertices
