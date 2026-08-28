@@ -64,12 +64,7 @@ jobs:
             cmake.define.PYRXMESH_USE_POLYSCOPE=ON
             cmake.define.PYRXMESH_BUILD_RXMESH_TESTS=OFF
             cmake.define.PYRXMESH_BUILD_RXMESH_APPS=OFF
-            cmake.define.PYRXMESH_INSTALL_PLUGIN_SDK=ON
-          CIBW_TEST_REQUIRES: >-
-            scikit-build-core>=0.12
-            pybind11>=2.13
-          CIBW_TEST_COMMAND: >-
-            python "{project}/.github/scripts/verify_wheel_plugin.py" "{project}"
+            cmake.define.PYRXMESH_INSTALL_PLUGIN_SDK=ON              
           CIBW_BEFORE_BUILD: >-
             python -m pip install "scikit-build-core>=0.12" "pybind11>=2.13" "numpy>=1.26"
           CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"

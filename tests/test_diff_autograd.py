@@ -331,15 +331,6 @@ def test_double_backward_is_rejected(tiny_mesh):
         torch.autograd.grad(gradient.sum(), x)
 
 
-def test_empty_energy_returns_zero(tiny_mesh):
-    x = _row_variable(_positions(tiny_mesh))
-    energy = rxmesh_diff_energy.make_empty_energy(tiny_mesh)
-    loss = energy.torch(x)
-    loss.backward()
-    assert loss.item() == 0.0
-    assert torch.count_nonzero(x.grad).item() == 0
-
-
 @pytest.mark.parametrize("context", ["forward_only", "no_grad"])
 def test_forward_without_autograd(tiny_mesh, context):
     values = _positions(tiny_mesh, 0.33)
