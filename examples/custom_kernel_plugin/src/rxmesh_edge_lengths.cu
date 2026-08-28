@@ -13,7 +13,8 @@ void compute_edge_lengths(py::object mesh_obj,
     auto out    = pyrxmesh::edge_attribute<float>(out_obj);
 
     if (coords.get_num_attributes() < 3) {
-        throw std::runtime_error("coords must have at least 3 values per vertex.");
+        throw std::runtime_error(
+            "coords must have at least 3 values per vertex.");
     }
     if (out.get_num_attributes() != 1) {
         throw std::runtime_error("out must have exactly 1 value per edge.");
@@ -21,11 +22,11 @@ void compute_edge_lengths(py::object mesh_obj,
 
     pyrxmesh::for_each<Op::EV, 256>(
         mesh_obj,
-        [coords, out] __device__(const EdgeHandle& eh,
+        [coords, out] __device__(const EdgeHandle&     eh,
                                  const VertexIterator& iter) mutable {
             const Eigen::Vector3f a = coords.to_eigen<3>(iter[0]);
             const Eigen::Vector3f b = coords.to_eigen<3>(iter[1]);
-            out(eh) = (a - b).norm();
+            out(eh)                 = (a - b).norm();
         });
 }
 
