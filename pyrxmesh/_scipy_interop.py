@@ -7,7 +7,7 @@ imported lazily on first call, so importing this module is cheap.
 
 from __future__ import annotations
 
-from . import Location, SparseMatrix
+from . import SparseMatrix
 
 
 def _require_scipy_sparse(api):
@@ -23,13 +23,13 @@ def _require_scipy_sparse(api):
 
 def _sparse_matrix_to_scipy_csr(self):
     scipy_sparse = _require_scipy_sparse("to_scipy_csr")
-    row_ptr, col_idx, values = self.to_numpy(Location.HOST)
+    row_ptr, col_idx, values = self.to_numpy("host")
     return scipy_sparse.csr_matrix(
         (values, col_idx, row_ptr), shape=self.shape
     )
 
 
-def _sparse_matrix_to_scipy_csr_copy(self, source=Location.HOST, stream=None):
+def _sparse_matrix_to_scipy_csr_copy(self, source="host", stream=None):
     scipy_sparse = _require_scipy_sparse("to_scipy_csr_copy")
     row_ptr, col_idx, values = self.to_numpy_copy(source=source, stream=stream)
     return scipy_sparse.csr_matrix(

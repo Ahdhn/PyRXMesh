@@ -238,13 +238,12 @@ inline py::capsule sparse_component_to_dlpack(
     const auto loc = parse_location(location);
     if (loc != rxmesh::HOST && loc != rxmesh::DEVICE) {
         throw std::invalid_argument(
-            "SparseMatrix DLPack location must be Location.HOST or "
-            "Location.DEVICE.");
+            "SparseMatrix DLPack location must be 'host' or 'device'.");
     }
     if (loc == rxmesh::HOST) {
         if (!stream.is_none()) {
             throw std::invalid_argument(
-                "SparseMatrix.to_dlpack(Location.HOST) requires stream=None.");
+                "SparseMatrix.to_dlpack('host') requires stream=None.");
         }
         self->ensure_host_readable();
     } else {
@@ -297,7 +296,7 @@ inline void sparse_values_from_dlpack_copy_typed(PySparseMatrix&         self,
     if ((target & (rxmesh::HOST | rxmesh::DEVICE)) == rxmesh::LOCATION_NONE) {
         throw std::invalid_argument(
             "SparseMatrix.from_dlpack_values_copy() target must include "
-            "Location.HOST or Location.DEVICE.");
+            "'host' or 'device'.");
     }
 
     std::vector<T> host(static_cast<size_t>(self.nnz()));

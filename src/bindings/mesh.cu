@@ -320,24 +320,24 @@ void register_mesh(py::module_& m)
              py::arg("name"),
              py::arg("dtype")    = "float32",
              py::arg("dim")      = 1,
-             py::arg("location") = static_cast<int>(LOCATION_ALL),
-             py::arg("layout")   = static_cast<int>(SoA),
+             py::arg("location") = "all",
+             py::arg("layout")   = "soa",
              "Add a typed vertex attribute.")
         .def("add_edge_attribute",
              &add_typed_attribute<EdgeHandle>,
              py::arg("name"),
              py::arg("dtype")    = "float32",
              py::arg("dim")      = 1,
-             py::arg("location") = static_cast<int>(LOCATION_ALL),
-             py::arg("layout")   = static_cast<int>(SoA),
+             py::arg("location") = "all",
+             py::arg("layout")   = "soa",
              "Add a typed edge attribute.")
         .def("add_face_attribute",
              &add_typed_attribute<FaceHandle>,
              py::arg("name"),
              py::arg("dtype")    = "float32",
              py::arg("dim")      = 1,
-             py::arg("location") = static_cast<int>(LOCATION_ALL),
-             py::arg("layout")   = static_cast<int>(SoA),
+             py::arg("location") = "all",
+             py::arg("layout")   = "soa",
              "Add a typed face attribute.")
         .def("add_attribute_like",
              &add_attribute_like,
@@ -359,11 +359,13 @@ void register_mesh(py::module_& m)
              "Remove an attribute by name.")
         .def(
             "sparse_matrix",
-            [](std::shared_ptr<RXMeshStatic> self, Op op, std::string dtype) {
+            [](std::shared_ptr<RXMeshStatic> self,
+               py::object                    op,
+               std::string                   dtype) {
                 return make_sparse_matrix_from_mesh(
-                    std::move(self), op, std::move(dtype));
+                    std::move(self), parse_op(op), std::move(dtype));
             },
-            py::arg("op")    = Op::VV,
+            py::arg("op")    = "vv",
             py::arg("dtype") = "float32",
             "Build an RXMesh-owned CSR sparse matrix for a mesh query op.")
         .def("__rxmesh_capsule__",

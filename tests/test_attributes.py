@@ -9,8 +9,8 @@ def test_attribute_metadata_allocation_and_numpy_round_trip(mesh) -> None:
         "py_vertex_vec3",
         dtype="float32",
         dim=3,
-        location=rx.Location.HOST,
-        layout=rx.Layout.SoA,
+        location="host",
+        layout="soa",
     )
 
     assert attr.name == "py_vertex_vec3"
@@ -20,6 +20,8 @@ def test_attribute_metadata_allocation_and_numpy_round_trip(mesh) -> None:
     assert attr.size == mesh.num_vertices
     assert attr.element_count == mesh.num_vertices
     assert attr.shape == (mesh.num_vertices, 3)
+    assert attr.allocated == "host"
+    assert attr.layout == "soa"
     assert attr.is_host_allocated
     assert not attr.is_device_allocated
     assert attr.bytes > 0
@@ -31,38 +33,38 @@ def test_attribute_metadata_allocation_and_numpy_round_trip(mesh) -> None:
     assert type(attr).__name__ == "VertexAttributeFloat32"
 
     values = np.arange(mesh.num_vertices * 3, dtype=np.float32).reshape(-1, 3)
-    attr.from_numpy_copy(values, target=rx.Location.ALL)
+    attr.from_numpy_copy(values, target="all")
     assert attr.is_device_allocated
 
-    copied = attr.to_numpy_copy(source=rx.Location.HOST)
+    copied = attr.to_numpy_copy(source="host")
     np.testing.assert_allclose(copied, values)
 
     copied[:, :] = -1.0
     np.testing.assert_allclose(
         attr.to_numpy_copy(
-            source=rx.Location.HOST),
+            source="host"),
         values)
 
-    attr.reset(5.0, location=rx.Location.ALL)
-    np.testing.assert_allclose(attr.to_numpy_copy(source=rx.Location.HOST), 5.0)
+    attr.reset(5.0, location="all")
+    np.testing.assert_allclose(attr.to_numpy_copy(source="host"), 5.0)
 
 
 @pytest.mark.parametrize(
     "layout, name",
     (
-        (rx.Layout.SoA, "soa"),
-        (rx.Layout.AoS, "aos"),
-        (rx.Layout.AoSoA, "aosoa"),
+        ("soa", "soa"),
+        ("aos", "aos"),
+        ("aosoa", "aosoa"),
     ),
 )
 def test_attribute_copy_rows_are_linear_for_every_layout(
-    mesh, layout: int, name: str
+    mesh, layout: str, name: str
 ) -> None:
     attr = mesh.add_vertex_attribute(
         f"linear_order_{name}",
         dtype="float32",
         dim=3,
-        location=rx.Location.ALL,
+        location="all",
         layout=layout,
     )
     rows = np.arange(mesh.num_vertices, dtype=np.float32)
@@ -70,21 +72,21 @@ def test_attribute_copy_rows_are_linear_for_every_layout(
         (rows, -2.0 * rows - 0.25, 1000.0 + 3.0 * rows)
     ).astype(np.float32)
 
-    attr.from_numpy_copy(linear_values, target=rx.Location.ALL)
+    attr.from_numpy_copy(linear_values, target="all")
 
     np.testing.assert_array_equal(
-        attr.to_numpy_copy(source=rx.Location.HOST), linear_values
+        attr.to_numpy_copy(source="host"), linear_values
     )
 
     # Keep deliberately different HOST and DEVICE values. The DEVICE copy
     # must gather from device storage without silently reading or overwriting
     # the stale host mirror, for every RXMesh attribute layout.
-    attr.reset(-17.0, location=rx.Location.HOST)
+    attr.reset(-17.0, location="host")
     np.testing.assert_array_equal(
-        attr.to_numpy_copy(source=rx.Location.DEVICE), linear_values
+        attr.to_numpy_copy(source="device"), linear_values
     )
     np.testing.assert_array_equal(
-        attr.to_numpy_copy(source=rx.Location.HOST),
+        attr.to_numpy_copy(source="host"),
         np.full_like(linear_values, -17.0),
     )
 
@@ -93,19 +95,37 @@ def test_attribute_copy_rows_are_linear_for_every_layout(
     assert maximum == linear_values[-1, 0]
 
 
+def test_attribute_rejects_unknown_location_and_layout_strings(mesh) -> None:
+    with pytest.raises(ValueError):
+        mesh.add_vertex_attribute(
+            "invalid_location",
+            dtype="float32",
+            dim=1,
+            location="somewhere",
+        )
+
+    with pytest.raises(ValueError):
+        mesh.add_vertex_attribute(
+            "invalid_layout",
+            dtype="float32",
+            dim=1,
+            layout="interleaved",
+        )
+
+
 def test_attribute_numpy_view_zero_copy(mesh) -> None:
     attr = mesh.add_vertex_attribute(
         "numpy_view_attr",
         dtype="float32",
         dim=3,
-        location=rx.Location.HOST,
-        layout=rx.Layout.SoA,
+        location="host",
+        layout="soa",
     )
 
     values = np.arange(mesh.num_vertices * 3, dtype=np.float32).reshape(-1, 3)
-    attr.from_numpy_copy(values, target=rx.Location.HOST)
+    attr.from_numpy_copy(values, target="host")
 
-    view = attr.to_numpy(rx.Location.HOST)
+    view = attr.to_numpy("host")
     assert view.shape == (mesh.num_vertices, 3)
     assert view.strides == (
         np.dtype(
@@ -114,7 +134,7 @@ def test_attribute_numpy_view_zero_copy(mesh) -> None:
         np.dtype(
             np.float32).itemsize)
     view[4, 2] = 42.0
-    assert attr.to_numpy_copy(source=rx.Location.HOST)[4, 2] == 42.0
+    assert attr.to_numpy_copy(source="host")[4, 2] == 42.0
 
 
 def test_attribute_numpy_view_rejects_aosoa_and_missing_host(mesh) -> None:
@@ -122,24 +142,24 @@ def test_attribute_numpy_view_rejects_aosoa_and_missing_host(mesh) -> None:
         "numpy_view_bad_layout",
         dtype="float32",
         dim=2,
-        location=rx.Location.HOST,
-        layout=rx.Layout.AoSoA,
+        location="host",
+        layout="aosoa",
     )
-    with pytest.raises(RuntimeError, match="Layout.SoA"):
-        aosoa.to_numpy(rx.Location.HOST)
+    with pytest.raises(RuntimeError, match="soa"):
+        aosoa.to_numpy("host")
 
     device_only = mesh.add_vertex_attribute(
         "numpy_view_missing_host",
         dtype="float32",
         dim=2,
-        location=rx.Location.DEVICE,
-        layout=rx.Layout.SoA,
+        location="device",
+        layout="soa",
     )
     with pytest.raises(RuntimeError, match="HOST allocation"):
-        device_only.to_numpy(rx.Location.HOST)
+        device_only.to_numpy("host")
 
     with pytest.raises(ValueError):
-        device_only.to_numpy(rx.Location.DEVICE)
+        device_only.to_numpy("device")
 
 
 def test_attribute_torch_storage_view_zero_copy_host(mesh) -> None:
@@ -147,14 +167,14 @@ def test_attribute_torch_storage_view_zero_copy_host(mesh) -> None:
         "torch_storage_attr",
         dtype="float32",
         dim=3,
-        location=rx.Location.ALL,
-        layout=rx.Layout.SoA,
+        location="all",
+        layout="soa",
     )
 
     values = np.arange(mesh.num_vertices * 3, dtype=np.float32).reshape(-1, 3)
-    attr.from_numpy_copy(values, target=rx.Location.ALL)
+    attr.from_numpy_copy(values, target="all")
 
-    tensor = attr.to_torch(rx.Location.HOST)
+    tensor = attr.to_torch("host")
     assert tuple(tensor.shape) == (mesh.num_vertices, 3)
     assert tensor.dtype == torch.float32
     assert tuple(tensor.stride()) == (1, mesh.num_vertices)
@@ -162,7 +182,7 @@ def test_attribute_torch_storage_view_zero_copy_host(mesh) -> None:
 
     np.testing.assert_allclose(
         attr.to_numpy_copy(
-            source=rx.Location.HOST), 13.0)
+            source="host"), 13.0)
 
 
 def test_attribute_torch_storage_view_zero_copy_cuda(mesh) -> None:
@@ -170,21 +190,21 @@ def test_attribute_torch_storage_view_zero_copy_cuda(mesh) -> None:
         "torch_storage_attr_cuda",
         dtype="float32",
         dim=2,
-        location=rx.Location.ALL,
-        layout=rx.Layout.SoA,
+        location="all",
+        layout="soa",
     )
 
     values = np.arange(mesh.num_vertices * 2, dtype=np.float32).reshape(-1, 2)
-    attr.from_numpy_copy(values, target=rx.Location.ALL)
+    attr.from_numpy_copy(values, target="all")
 
-    tensor = attr.to_torch(rx.Location.DEVICE)
+    tensor = attr.to_torch("device")
     assert tuple(tensor.shape) == (mesh.num_vertices, 2)
     assert tensor.is_cuda
     tensor[3, 1] = 77.0
     torch.cuda.synchronize()
 
-    attr.move(rx.Location.DEVICE, rx.Location.HOST)
-    assert attr.to_numpy_copy(source=rx.Location.HOST)[3, 1] == 77.0
+    attr.move("device", "host")
+    assert attr.to_numpy_copy(source="host")[3, 1] == 77.0
 
 
 def test_attribute_from_torch_copy_cpu(mesh) -> None:
@@ -192,21 +212,21 @@ def test_attribute_from_torch_copy_cpu(mesh) -> None:
         "torch_copy_attr",
         dtype="float32",
         dim=2,
-        location=rx.Location.ALL,
+        location="all",
     )
 
     values = torch.arange(mesh.num_vertices * 2,
                           dtype=torch.float32).reshape(-1, 2)
-    attr.from_torch_copy(values, target=rx.Location.ALL)
+    attr.from_torch_copy(values, target="all")
 
     np.testing.assert_allclose(
-        attr.to_numpy_copy(source=rx.Location.HOST),
+        attr.to_numpy_copy(source="host"),
         values.numpy(),
     )
     expected = values.numpy().copy()
     values[:, :] = -1.0
     np.testing.assert_allclose(
-        attr.to_numpy_copy(source=rx.Location.HOST),
+        attr.to_numpy_copy(source="host"),
         expected,
     )
 
@@ -216,17 +236,17 @@ def test_attribute_from_torch_copy_cuda(mesh) -> None:
         "torch_copy_attr_cuda",
         dtype="float32",
         dim=2,
-        location=rx.Location.ALL,
-        layout=rx.Layout.SoA,
+        location="all",
+        layout="soa",
     )
 
     values = torch.arange(
         mesh.num_vertices * 2, dtype=torch.float32, device="cuda"
     ).reshape(-1, 2)
-    attr.from_torch_copy(values, target=rx.Location.ALL)
+    attr.from_torch_copy(values, target="all")
 
     np.testing.assert_allclose(
-        attr.to_numpy_copy(source=rx.Location.HOST),
+        attr.to_numpy_copy(source="host"),
         values.cpu().numpy(),
     )
 
@@ -236,7 +256,7 @@ def test_attribute_like_copy_and_remove(mesh) -> None:
         "py_edge_src",
         dtype="int32",
         dim=1,
-        location=rx.Location.ALL,
+        location="all",
     )
     dst = mesh.add_attribute_like("py_edge_dst", src)
 
@@ -250,11 +270,11 @@ def test_attribute_like_copy_and_remove(mesh) -> None:
     assert dst.shape == src.shape
 
     values = np.arange(mesh.num_edges, dtype=np.int32).reshape(-1, 1)
-    src.from_numpy_copy(values, target=rx.Location.ALL)
+    src.from_numpy_copy(values, target="all")
     dst.copy_from(src)
     np.testing.assert_array_equal(
         dst.to_numpy_copy(
-            source=rx.Location.HOST), values)
+            source="host"), values)
 
     mesh.remove_attribute("py_edge_dst")
     assert not mesh.has_attribute("py_edge_dst")
@@ -266,14 +286,14 @@ def test_attribute_reductions_float32(mesh) -> None:
         "py_reduce_values",
         dtype="float32",
         dim=1,
-        location=rx.Location.ALL,
+        location="all",
     )
     other = mesh.add_attribute_like("py_reduce_other", attr)
 
     values = np.arange(mesh.num_vertices, dtype=np.float32).reshape(-1, 1)
     other_values = np.full((mesh.num_vertices, 1), 2.0, dtype=np.float32)
-    attr.from_numpy_copy(values, target=rx.Location.ALL)
-    other.from_numpy_copy(other_values, target=rx.Location.ALL)
+    attr.from_numpy_copy(values, target="all")
+    other.from_numpy_copy(other_values, target="all")
 
     np.testing.assert_allclose(attr.reduce_sum(), np.sum(values), rtol=1e-5)
     np.testing.assert_allclose(attr.reduce_min(), np.min(values), rtol=1e-5)

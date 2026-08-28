@@ -6,18 +6,42 @@ namespace pyrxmesh_py {
 void register_dense_matrix(py::module_& m)
 {
     py::class_<PyDenseMatrix, std::shared_ptr<PyDenseMatrix>>(m, "DenseMatrix")
-        .def(py::init(&make_dense_matrix),
+        .def(py::init([](int                rows,
+                         int                cols,
+                         const std::string& dtype,
+                         py::object         location,
+                         const std::string& order) {
+                 return make_dense_matrix(
+                     rows,
+                     cols,
+                     dtype,
+                     static_cast<int>(parse_location(location)),
+                     order);
+             }),
              py::arg("rows"),
              py::arg("cols"),
              py::arg("dtype")    = "float32",
-             py::arg("location") = static_cast<int>(rxmesh::LOCATION_ALL),
+             py::arg("location") = "all",
              py::arg("order")    = "col_major")
-        .def(py::init(&make_dense_matrix_for_mesh),
+        .def(py::init([](std::shared_ptr<rxmesh::RXMeshStatic> mesh,
+                         int                                   rows,
+                         int                                   cols,
+                         const std::string&                    dtype,
+                         py::object                            location,
+                         const std::string&                    order) {
+                 return make_dense_matrix_for_mesh(
+                     std::move(mesh),
+                     rows,
+                     cols,
+                     dtype,
+                     static_cast<int>(parse_location(location)),
+                     order);
+             }),
              py::arg("mesh"),
              py::arg("rows"),
              py::arg("cols"),
              py::arg("dtype")    = "float32",
-             py::arg("location") = static_cast<int>(rxmesh::LOCATION_ALL),
+             py::arg("location") = "all",
              py::arg("order")    = "col_major")
         .def_static("from_dlpack_copy",
                     &dense_matrix_from_dlpack_copy,
@@ -36,7 +60,11 @@ void register_dense_matrix(py::module_& m)
         .def_property_readonly("shape", &PyDenseMatrix::shape)
         .def_property_readonly("dtype", &PyDenseMatrix::dtype)
         .def_property_readonly("order", &PyDenseMatrix::order)
-        .def_property_readonly("location", &PyDenseMatrix::location)
+        .def_property_readonly(
+            "location",
+            [](const PyDenseMatrix& self) {
+                return location_name(parse_location(self.location()));
+            })
         .def_property_readonly("bytes", &PyDenseMatrix::bytes)
         .def_property_readonly("is_host_allocated",
                                &PyDenseMatrix::is_host_allocated)
@@ -46,7 +74,10 @@ void register_dense_matrix(py::module_& m)
         .def_property_readonly("is_read_only", &PyDenseMatrix::is_read_only)
         .def(
             "move",
-            [](PyDenseMatrix& self, int source, int target, py::object stream) {
+            [](PyDenseMatrix& self,
+               py::object     source,
+               py::object     target,
+               py::object     stream) {
                 self.move(parse_location(source),
                           parse_location(target),
                           parse_cuda_stream_arg(std::move(stream)));
@@ -54,21 +85,24 @@ void register_dense_matrix(py::module_& m)
             py::arg("source"),
             py::arg("target"),
             py::arg("stream") = py::none())
-        .def("release",
-             &PyDenseMatrix::release,
-             py::arg("location") = static_cast<int>(rxmesh::LOCATION_ALL))
+        .def(
+            "release",
+            [](PyDenseMatrix& self, py::object location) {
+                self.release(static_cast<int>(parse_location(location)));
+            },
+            py::arg("location") = "all")
         .def(
             "reset",
             [](PyDenseMatrix& self,
                py::object     value,
-               int            location,
+               py::object     location,
                py::object     stream) {
                 self.reset(std::move(value),
-                           location,
+                           static_cast<int>(parse_location(location)),
                            parse_cuda_stream_arg(std::move(stream)));
             },
             py::arg("value"),
-            py::arg("location") = static_cast<int>(rxmesh::LOCATION_ALL),
+            py::arg("location") = "all",
             py::arg("stream")   = py::none())
         .def("fill_random",
              &PyDenseMatrix::fill_random,
@@ -83,40 +117,48 @@ void register_dense_matrix(py::module_& m)
              py::arg("row_or_handle"),
              py::arg("col"),
              py::arg("value"))
-        .def("to_numpy",
-             &PyDenseMatrix::to_numpy,
-             py::arg("location") = static_cast<int>(rxmesh::HOST))
-        .def("to_numpy_copy",
-             &PyDenseMatrix::to_numpy_copy,
-             py::arg("source") = static_cast<int>(rxmesh::HOST))
+        .def(
+            "to_numpy",
+            [](PyDenseMatrix& self, py::object location) {
+                return self.to_numpy(
+                    static_cast<int>(parse_location(location)));
+            },
+            py::arg("location") = "host")
+        .def(
+            "to_numpy_copy",
+            [](PyDenseMatrix& self, py::object source) {
+                return self.to_numpy_copy(
+                    static_cast<int>(parse_location(source)));
+            },
+            py::arg("source") = "host")
         .def(
             "from_numpy_copy",
             [](PyDenseMatrix& self,
                py::array      values,
-               int            target,
+               py::object     target,
                py::object     stream) {
                 self.from_numpy_copy(std::move(values),
-                                     target,
+                                     static_cast<int>(parse_location(target)),
                                      parse_cuda_stream_arg(std::move(stream)));
             },
             py::arg("values"),
-            py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
+            py::arg("target") = "all",
             py::arg("stream") = py::none())
         .def(
             "copy_from",
             [](PyDenseMatrix& self,
                PyDenseMatrix& other,
-               int            source,
-               int            target,
+               py::object     source,
+               py::object     target,
                py::object     stream) {
                 self.copy_from(other,
-                               source,
-                               target,
+                               static_cast<int>(parse_location(source)),
+                               static_cast<int>(parse_location(target)),
                                parse_cuda_stream_arg(std::move(stream)));
             },
             py::arg("other"),
-            py::arg("source") = static_cast<int>(rxmesh::LOCATION_ALL),
-            py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
+            py::arg("source") = "all",
+            py::arg("target") = "all",
             py::arg("stream") = py::none())
         .def(
             "norm2",
@@ -191,12 +233,14 @@ void register_dense_matrix(py::module_& m)
         .def(
             "to_dlpack",
             [](std::shared_ptr<PyDenseMatrix> self,
-               int                            location,
+               py::object                     location,
                py::object                     stream) {
                 return dense_matrix_to_dlpack(
-                    std::move(self), location, std::move(stream));
+                    std::move(self),
+                    static_cast<int>(parse_location(location)),
+                    std::move(stream));
             },
-            py::arg("location") = static_cast<int>(rxmesh::DEVICE),
+            py::arg("location") = "device",
             py::arg("stream")   = py::none(),
             "Return a DLPack capsule that views RXMesh-owned memory.")
         .def(

@@ -5,12 +5,12 @@ from pathlib import Path
 import numpy as np
 import pyrxmesh as rx
 import pytest
-import torch 
+import torch
 import scipy.sparse as sp
 
 
 def test_sparse_matrix_metadata_and_csr_arrays(mesh) -> None:
-    matrix = mesh.sparse_matrix(rx.Op.VV, dtype="float32")
+    matrix = mesh.sparse_matrix("vv", dtype="float32")
 
     assert matrix.rows == mesh.num_vertices
     assert matrix.cols == mesh.num_vertices
@@ -18,8 +18,10 @@ def test_sparse_matrix_metadata_and_csr_arrays(mesh) -> None:
     assert matrix.nnz > mesh.num_vertices
     assert matrix.dtype == "float32"
     assert matrix.index_dtype == "int32"
+    assert matrix.op == "vv"
+    assert matrix.location == "all"
     assert matrix.is_host_allocated
-    assert matrix.is_device_allocated    
+    assert matrix.is_device_allocated
 
     row_ptr, col_idx, values = matrix.to_numpy_copy()
     assert row_ptr.dtype == np.int32
@@ -34,11 +36,19 @@ def test_sparse_matrix_metadata_and_csr_arrays(mesh) -> None:
     assert np.all((col_idx >= 0) & (col_idx < matrix.cols))
 
 
+def test_sparse_matrix_rejects_unknown_op_strings(mesh) -> None:
+    with pytest.raises(ValueError):
+        mesh.sparse_matrix("not_an_op")
+
+    with pytest.raises(ValueError):
+        rx.JacobianSparseMatrix(mesh, ["not_an_op"], [(1, 1)])
+
+
 def test_sparse_matrix_host_values_round_trip_and_zero_copy_view(mesh) -> None:
-    matrix = rx.SparseMatrix(mesh, rx.Op.VV, dtype="float64")
+    matrix = rx.SparseMatrix(mesh, "vv", dtype="float64")
 
     values = np.linspace(0.0, 1.0, matrix.nnz, dtype=np.float64)
-    matrix.from_numpy_values_copy(values, target=rx.Location.ALL)
+    matrix.from_numpy_values_copy(values, target="all")
     np.testing.assert_allclose(matrix.to_numpy_copy()[2], values)
 
     view = matrix.to_numpy()[2]
@@ -53,13 +63,13 @@ def test_sparse_matrix_host_values_round_trip_and_zero_copy_view(mesh) -> None:
     assert row_ptr.base is not None
     assert col_idx.base is not None
 
-    with pytest.raises(ValueError, match="Location.HOST"):
-        matrix.to_numpy(rx.Location.DEVICE)
+    with pytest.raises(ValueError, match="host"):
+        matrix.to_numpy("device")
 
 
 def test_sparse_matrix_host_entry_access(mesh) -> None:
     matrix = mesh.sparse_matrix(dtype="float32")
-    matrix.reset(2.5, location=rx.Location.ALL)
+    matrix.reset(2.5, location="all")
 
     row_ptr, col_idx, values = matrix.to_numpy_copy()
     row = int(np.flatnonzero(row_ptr[1:] > row_ptr[:-1])[0])
@@ -88,6 +98,8 @@ def test_sparse_matrix_from_numpy_copy_owns_memory() -> None:
 
     assert matrix.shape == (3, 3)
     assert matrix.nnz == 4
+    assert matrix.op == "invalid"
+    assert matrix.location == "all"
     out_row_ptr, out_col_idx, out_values = matrix.to_numpy_copy()
     np.testing.assert_array_equal(out_row_ptr, row_ptr)
     np.testing.assert_array_equal(out_col_idx, col_idx)
@@ -101,8 +113,8 @@ def test_sparse_matrix_from_numpy_copy_owns_memory() -> None:
 
 
 def test_sparse_matrix_dense_multiply(mesh) -> None:
-    matrix = mesh.sparse_matrix(rx.Op.VV, dtype="float32")
-    matrix.reset(1.0, location=rx.Location.ALL)
+    matrix = mesh.sparse_matrix("vv", dtype="float32")
+    matrix.reset(1.0, location="all")
 
     rhs_values = np.arange(matrix.cols * 2, dtype=np.float32).reshape(
         matrix.cols,
@@ -112,14 +124,14 @@ def test_sparse_matrix_dense_multiply(mesh) -> None:
         matrix.cols,
         2,
         dtype="float32",
-        location=rx.Location.ALL,
+        location="all",
     )
-    rhs.from_numpy_copy(rhs_values, target=rx.Location.ALL)
+    rhs.from_numpy_copy(rhs_values, target="all")
 
     result = matrix.multiply(rhs)
-    result.move(rx.Location.DEVICE, rx.Location.HOST)
+    result.move("device", "host")
     rx.cuda_stream_synchronize()
-    result_values = result.to_numpy_copy(source=rx.Location.HOST)
+    result_values = result.to_numpy_copy(source="host")
 
     row_ptr, col_idx, values = matrix.to_numpy_copy()
     expected = np.zeros((matrix.rows, 2), dtype=np.float32)
@@ -136,14 +148,14 @@ def test_sparse_matrix_dense_multiply(mesh) -> None:
         matrix.cols,
         1,
         dtype="float32",
-        location=rx.Location.ALL,
+        location="all",
     )
-    vector.from_numpy_copy(vector_values, target=rx.Location.ALL, stream=stream)    
-    vector_result = matrix.multiply_vector(vector, stream=stream)    
-    vector_result.move(rx.Location.DEVICE, rx.Location.HOST)
+    vector.from_numpy_copy(vector_values, target="all", stream=stream)
+    vector_result = matrix.multiply_vector(vector, stream=stream)
+    vector_result.move("device", "host")
     rx.cuda_stream_synchronize(stream)
-    
-    vector_result_values = vector_result.to_numpy_copy(source=rx.Location.HOST)
+
+    vector_result_values = vector_result.to_numpy_copy(source="host")
     expected_vector = np.zeros((matrix.rows, 1), dtype=np.float32)
     for row in range(matrix.rows):
         for offset in range(row_ptr[row], row_ptr[row + 1]):
@@ -155,12 +167,12 @@ def test_sparse_matrix_dense_multiply(mesh) -> None:
     np.testing.assert_allclose(
         vector_result_values, expected_vector, rtol=1e-5, atol=1e-5
     )
-    
+
     bad_vector = rx.DenseMatrix(
         matrix.cols,
         2,
         dtype="float32",
-        location=rx.Location.ALL,
+        location="all",
     )
     with pytest.raises(ValueError, match="one column"):
         matrix.multiply_vector(bad_vector)
@@ -172,8 +184,8 @@ def test_sparse_matrix_dense_multiply(mesh) -> None:
 
 def test_sparse_matrix_torch_csr_cpu_zero_copy(mesh) -> None:
     matrix = mesh.sparse_matrix(dtype="float32")
-    matrix.reset(1.0, location=rx.Location.ALL)
-    torch_matrix = matrix.to_torch(rx.Location.HOST)    
+    matrix.reset(1.0, location="all")
+    torch_matrix = matrix.to_torch("host")
     crow = torch_matrix.crow_indices()
     col = torch_matrix.col_indices()
     values = torch_matrix.values()
@@ -206,8 +218,8 @@ def test_sparse_matrix_from_torch_copy_cpu() -> None:
 
 def test_sparse_matrix_torch_csr_cuda_zero_copy(mesh) -> None:
     matrix = mesh.sparse_matrix(dtype="float32")
-    matrix.reset(3.0, location=rx.Location.ALL)
-    torch_matrix = matrix.to_torch(rx.Location.DEVICE)    
+    matrix.reset(3.0, location="all")
+    torch_matrix = matrix.to_torch("device")
     crow = torch_matrix.crow_indices()
     col = torch_matrix.col_indices()
     values = torch_matrix.values()
@@ -226,7 +238,7 @@ def test_sparse_matrix_from_torch_values_copy_cpu(mesh) -> None:
     matrix = mesh.sparse_matrix(dtype="float32")
     values = torch.arange(matrix.nnz, dtype=torch.float32)
 
-    matrix.from_torch_values_copy(values, target=rx.Location.ALL)
+    matrix.from_torch_values_copy(values, target="all")
     np.testing.assert_allclose(
         matrix.to_numpy_copy()[2],
         values.numpy(),
@@ -236,13 +248,16 @@ def test_sparse_matrix_from_torch_values_copy_cpu(mesh) -> None:
 def test_sparse_matrix_from_torch_copy_cuda() -> None:
     crow = torch.tensor([0, 2, 3, 4], dtype=torch.int32, device="cuda")
     col = torch.tensor([0, 2, 1, 2], dtype=torch.int32, device="cuda")
-    values = torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=torch.float32, device="cuda")
+    values = torch.tensor([1.0, 2.0, 3.0, 4.0],
+                          dtype=torch.float32, device="cuda")
     torch_matrix = torch.sparse_csr_tensor(crow, col, values, size=(3, 3))
 
     matrix = rx.SparseMatrix.from_torch_copy(torch_matrix)
     row_ptr, col_idx, out_values = matrix.to_numpy_copy()
-    np.testing.assert_array_equal(row_ptr, np.array([0, 2, 3, 4], dtype=np.int32))
-    np.testing.assert_array_equal(col_idx, np.array([0, 2, 1, 2], dtype=np.int32))
+    np.testing.assert_array_equal(
+        row_ptr, np.array([0, 2, 3, 4], dtype=np.int32))
+    np.testing.assert_array_equal(
+        col_idx, np.array([0, 2, 1, 2], dtype=np.int32))
     np.testing.assert_allclose(
         out_values,
         np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32),
@@ -253,15 +268,16 @@ def test_sparse_matrix_from_torch_values_copy_cuda(mesh) -> None:
     matrix = mesh.sparse_matrix(dtype="float32")
     values = torch.arange(matrix.nnz, dtype=torch.float32, device="cuda")
 
-    matrix.from_torch_values_copy(values, target=rx.Location.ALL)
+    matrix.from_torch_values_copy(values, target="all")
     np.testing.assert_allclose(
         matrix.to_numpy_copy()[2],
         np.arange(matrix.nnz, dtype=np.float32),
     )
 
-def test_sparse_matrix_scipy_multiply_vector(mesh, tmp_path: Path) -> None:    
-    matrix = mesh.sparse_matrix(rx.Op.VV, dtype="float32")
-    matrix.reset(1.0, location=rx.Location.ALL)
+
+def test_sparse_matrix_scipy_multiply_vector(mesh, tmp_path: Path) -> None:
+    matrix = mesh.sparse_matrix("vv", dtype="float32")
+    matrix.reset(1.0, location="all")
 
     scipy_matrix = matrix.to_scipy_csr()
     assert isinstance(scipy_matrix, sp.csr_matrix)
@@ -270,16 +286,17 @@ def test_sparse_matrix_scipy_multiply_vector(mesh, tmp_path: Path) -> None:
 
     vector = np.arange(matrix.cols, dtype=np.float32)
     result_matrix = matrix.multiply_vector(vector)
-    result_matrix.move(rx.Location.DEVICE, rx.Location.HOST)
+    result_matrix.move("device", "host")
     rx.cuda_stream_synchronize()
-    result = result_matrix.to_numpy_copy(source=rx.Location.HOST)
+    result = result_matrix.to_numpy_copy(source="host")
     expected = scipy_matrix @ vector.reshape(-1, 1)
     np.testing.assert_allclose(result, expected, rtol=1e-5, atol=1e-5)
+
 
 def test_diff_sparse_matrix_containers(mesh) -> None:
     jacobian = rx.JacobianSparseMatrix(
         mesh,
-        [rx.Op.VV],
+        ["vv"],
         [(1, 1)],
         dtype="float32",
     )
@@ -293,14 +310,14 @@ def test_diff_sparse_matrix_containers(mesh) -> None:
         mesh,
         variable_dim=2,
         extra_nnz_entries=0,
-        op=rx.Op.VV,
+        op="vv",
         dtype="float32",
     )
     assert isinstance(hessian, rx.SparseMatrix)
     assert hessian.variable_dim == 2
     assert hessian.shape == (mesh.num_vertices * 2, mesh.num_vertices * 2)
     assert hessian.nnz > 0
-    
+
     for matrix in (jacobian, hessian):
         assert isinstance(matrix, rx.SparseMatrix)
         assert matrix.rows > 0
@@ -309,6 +326,7 @@ def test_diff_sparse_matrix_containers(mesh) -> None:
         assert matrix.nnz > 0
         assert matrix.dtype == "float32"
         assert matrix.to_numpy_copy()[0].shape[0] == matrix.rows + 1
-        
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__]))

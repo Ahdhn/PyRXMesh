@@ -287,15 +287,15 @@ struct PyAttribute final : PyAttributeBase
         const auto loc = parse_location(location);
         if (loc != rxmesh::HOST) {
             throw std::invalid_argument(
-                "Attribute.to_numpy() only supports Location.HOST. Use "
-                "Attribute.to_torch(Location.DEVICE) for CUDA zero-copy "
+                "Attribute.to_numpy() only supports 'host'. Use "
+                "Attribute.to_torch('device') for CUDA zero-copy "
                 "views or Attribute.to_numpy_copy() for copies.");
         }
         if (!attr->is_tensor_layout()) {
             throw std::runtime_error(
                 "Attribute.to_numpy() only supports zero-copy views for "
-                "Layout.SoA attributes. Use Attribute.to_numpy_copy() for "
-                "AoS/AoSoA attributes.");
+                "'soa' attributes. Use Attribute.to_numpy_copy() for "
+                "'aos'/'aosoa' attributes.");
         }
         if (!attr->is_host_allocated()) {
             throw std::runtime_error(
@@ -318,8 +318,8 @@ struct PyAttribute final : PyAttributeBase
         const auto src = parse_location(source);
         if (src != rxmesh::HOST && src != rxmesh::DEVICE) {
             throw std::invalid_argument(
-                "Attribute.to_numpy_copy() source must be Location.HOST or "
-                "Location.DEVICE.");
+                "Attribute.to_numpy_copy() source must be 'host' or "
+                "'device'.");
         }
         py::array_t<T> out({static_cast<py::ssize_t>(attr->rows()),
                             static_cast<py::ssize_t>(attr->cols())});
@@ -634,8 +634,8 @@ py::object add_typed_attribute(
     const std::string&                           name,
     const std::string&                           dtype,
     uint32_t                                     dim,
-    int                                          location,
-    int                                          layout)
+    py::object                                   location,
+    py::object                                   layout)
 {
     const auto loc        = parse_location(location);
     const auto mem_layout = parse_layout(layout);

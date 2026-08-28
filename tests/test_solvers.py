@@ -24,9 +24,9 @@ def diagonal_system(dtype: str):
         4,
         2,
         dtype=dtype,
-        location=rx.Location.ALL,
+        location="all",
     )
-    rhs.from_numpy_copy(rhs_values, target=rx.Location.ALL)
+    rhs.from_numpy_copy(rhs_values, target="all")
     expected = rhs_values / diagonal.reshape(-1, 1)
     return matrix, rhs, expected
 
@@ -50,7 +50,7 @@ def test_cg_solver() -> None:
     assert solution.shape == expected.shape
     rx.cuda_stream_synchronize()
     np.testing.assert_allclose(
-        solution.to_numpy_copy(source=rx.Location.HOST),
+        solution.to_numpy_copy(source="host"),
         expected,
         rtol=1e-4,
         atol=1e-4,
@@ -70,9 +70,9 @@ def test_pcg_solver() -> None:
         matrix.cols,
         rhs.cols,
         dtype="float64",
-        location=rx.Location.ALL,
+        location="all",
     )
-    solution.reset(0.0, location=rx.Location.ALL)
+    solution.reset(0.0, location="all")
 
     solver.pre_solve(rhs, solution)
     solver.solve(rhs, solution, pre_solve=False)
@@ -82,7 +82,7 @@ def test_pcg_solver() -> None:
     assert solver.final_residual < solver.start_residual
     rx.cuda_stream_synchronize()
     np.testing.assert_allclose(
-        solution.to_numpy_copy(source=rx.Location.HOST),
+        solution.to_numpy_copy(source="host"),
         expected,
         rtol=1e-8,
         atol=1e-8,
@@ -109,7 +109,7 @@ def test_iterative() -> None:
         rhs.rows,
         rhs.cols + 1,
         dtype="float32",
-        location=rx.Location.ALL,
+        location="all",
     )
     with pytest.raises(ValueError, match="unknown_dim"):
         solver.solve(bad_rhs)
@@ -139,7 +139,7 @@ def test_direct_solvers(
     assert not solver.is_factorized
     rx.cuda_stream_synchronize()
     np.testing.assert_allclose(
-        solution.to_numpy_copy(source=rx.Location.HOST),
+        solution.to_numpy_copy(source="host"),
         expected,
         rtol=rtol,
         atol=atol,
@@ -153,15 +153,15 @@ def test_direct_solver_solve() -> None:
         matrix.cols,
         rhs.cols,
         dtype="float64",
-        location=rx.Location.ALL,
+        location="all",
     )
-    solution.reset(0.0, location=rx.Location.ALL)
+    solution.reset(0.0, location="all")
 
     solver.solve(rhs, solution)
 
     rx.cuda_stream_synchronize()
     np.testing.assert_allclose(
-        solution.to_numpy_copy(source=rx.Location.HOST),
+        solution.to_numpy_copy(source="host"),
         expected,
         rtol=1e-10,
         atol=1e-10,

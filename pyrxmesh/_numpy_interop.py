@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from . import DenseMatrix, Location, SparseMatrix
+from . import DenseMatrix, SparseMatrix
 
 
 _spmat_multiply_vector = SparseMatrix.multiply_vector
@@ -37,9 +37,9 @@ def _sparse_matrix_multiply_vector(self, vector, stream=None):
         self.cols,
         1,
         dtype=self.dtype,
-        location=Location.ALL,
+        location="all",
     )
-    dense.from_numpy_copy(values, target=Location.ALL, stream=stream)
+    dense.from_numpy_copy(values, target="all", stream=stream)
     return _spmat_multiply_vector(self, dense, stream)
 
 

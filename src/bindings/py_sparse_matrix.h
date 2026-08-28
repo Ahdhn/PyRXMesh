@@ -342,7 +342,7 @@ struct PySparseMatrixT : PySparseMatrix
         const auto src = parse_location(source);
         if (src != rxmesh::HOST) {
             throw std::invalid_argument(
-                "SparseMatrix.to_numpy() only supports Location.HOST.");
+                "SparseMatrix.to_numpy() only supports 'host'.");
         }
         ensure_host_readable();
         return make_numpy_1d<IndexT>(matrix->row_ptr(src), rows() + 1, copy);
@@ -353,7 +353,7 @@ struct PySparseMatrixT : PySparseMatrix
         const auto src = parse_location(source);
         if (src != rxmesh::HOST) {
             throw std::invalid_argument(
-                "SparseMatrix.to_numpy() only supports Location.HOST.");
+                "SparseMatrix.to_numpy() only supports 'host'.");
         }
         ensure_host_readable();
         return make_numpy_1d<IndexT>(matrix->col_idx(src), nnz(), copy);
@@ -364,7 +364,7 @@ struct PySparseMatrixT : PySparseMatrix
         const auto src = parse_location(source);
         if (src != rxmesh::HOST) {
             throw std::invalid_argument(
-                "SparseMatrix.to_numpy() only supports Location.HOST.");
+                "SparseMatrix.to_numpy() only supports 'host'.");
         }
         ensure_host_readable();
         return make_numpy_1d<T>(matrix->val_ptr(src), nnz(), copy);

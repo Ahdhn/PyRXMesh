@@ -48,6 +48,45 @@ inline rxmesh::locationT parse_location(int location)
     return static_cast<rxmesh::locationT>(location);
 }
 
+inline rxmesh::locationT parse_location(py::handle location)
+{
+    if (!py::isinstance<py::str>(location)) {
+        return parse_location(py::cast<int>(location));
+    }
+
+    const auto name = py::cast<std::string>(location);
+    if (name == "none") {
+        return rxmesh::LOCATION_NONE;
+    }
+    if (name == "host") {
+        return rxmesh::HOST;
+    }
+    if (name == "device") {
+        return rxmesh::DEVICE;
+    }
+    if (name == "all") {
+        return rxmesh::LOCATION_ALL;
+    }
+    throw std::invalid_argument(
+        "location must be 'none', 'host', 'device', or 'all'.");
+}
+
+inline const char* location_name(rxmesh::locationT location)
+{
+    switch (location) {
+        case rxmesh::LOCATION_NONE:
+            return "none";
+        case rxmesh::HOST:
+            return "host";
+        case rxmesh::DEVICE:
+            return "device";
+        case rxmesh::LOCATION_ALL:
+            return "all";
+        default:
+            throw std::invalid_argument("Unknown RXMesh memory location.");
+    }
+}
+
 inline int64_t cuda_stream_arg_value(py::object stream)
 {
     if (stream.is_none()) {
@@ -98,6 +137,113 @@ inline void synchronize_device_transfer(rxmesh::locationT source,
 inline rxmesh::layoutT parse_layout(int layout)
 {
     return static_cast<rxmesh::layoutT>(layout);
+}
+
+inline rxmesh::layoutT parse_layout(py::handle layout)
+{
+    if (!py::isinstance<py::str>(layout)) {
+        return parse_layout(py::cast<int>(layout));
+    }
+
+    const auto name = py::cast<std::string>(layout);
+    if (name == "soa") {
+        return rxmesh::SoA;
+    }
+    if (name == "aos") {
+        return rxmesh::AoS;
+    }
+    if (name == "aosoa") {
+        return rxmesh::AoSoA;
+    }
+    throw std::invalid_argument("layout must be 'soa', 'aos', or 'aosoa'.");
+}
+
+inline const char* layout_name(rxmesh::layoutT layout)
+{
+    switch (layout) {
+        case rxmesh::SoA:
+            return "soa";
+        case rxmesh::AoS:
+            return "aos";
+        case rxmesh::AoSoA:
+            return "aosoa";
+        default:
+            throw std::invalid_argument("Unknown RXMesh attribute layout.");
+    }
+}
+
+inline rxmesh::Op parse_op(py::handle op)
+{
+    if (!py::isinstance<py::str>(op)) {
+        return py::cast<rxmesh::Op>(op);
+    }
+
+    const auto name = py::cast<std::string>(op);
+    if (name == "v")
+        return rxmesh::Op::V;
+    if (name == "e")
+        return rxmesh::Op::E;
+    if (name == "f")
+        return rxmesh::Op::F;
+    if (name == "vv")
+        return rxmesh::Op::VV;
+    if (name == "ve")
+        return rxmesh::Op::VE;
+    if (name == "vf")
+        return rxmesh::Op::VF;
+    if (name == "fv")
+        return rxmesh::Op::FV;
+    if (name == "fe")
+        return rxmesh::Op::FE;
+    if (name == "ff")
+        return rxmesh::Op::FF;
+    if (name == "ev")
+        return rxmesh::Op::EV;
+    if (name == "ee")
+        return rxmesh::Op::EE;
+    if (name == "ef")
+        return rxmesh::Op::EF;
+    if (name == "ev_diamond")
+        return rxmesh::Op::EVDiamond;
+    throw std::invalid_argument(
+        "op must be one of: 'v', 'e', 'f', 'vv', 've', 'vf', 'fv', 'fe', "
+        "'ff', 'ev', 'ee', 'ef', or 'ev_diamond'.");
+}
+
+inline const char* op_name(rxmesh::Op op)
+{
+    switch (op) {
+        case rxmesh::Op::INVALID:
+            return "invalid";
+        case rxmesh::Op::V:
+            return "v";
+        case rxmesh::Op::E:
+            return "e";
+        case rxmesh::Op::F:
+            return "f";
+        case rxmesh::Op::VV:
+            return "vv";
+        case rxmesh::Op::VE:
+            return "ve";
+        case rxmesh::Op::VF:
+            return "vf";
+        case rxmesh::Op::FV:
+            return "fv";
+        case rxmesh::Op::FE:
+            return "fe";
+        case rxmesh::Op::FF:
+            return "ff";
+        case rxmesh::Op::EV:
+            return "ev";
+        case rxmesh::Op::EE:
+            return "ee";
+        case rxmesh::Op::EF:
+            return "ef";
+        case rxmesh::Op::EVDiamond:
+            return "ev_diamond";
+        default:
+            throw std::invalid_argument("Unknown RXMesh query operation.");
+    }
 }
 
 inline void ensure_polyscope_available()

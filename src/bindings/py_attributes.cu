@@ -60,15 +60,14 @@ void require_attribute_tensor_view(const PyAttributeBase& self,
                                    const char*            api)
 {
     if (location != rxmesh::HOST && location != rxmesh::DEVICE) {
-        throw std::invalid_argument(
-            std::string(api) +
-            " location must be Location.HOST or  Location.DEVICE.");
+        throw std::invalid_argument(std::string(api) +
+                                    " location must be 'host' or 'device'.");
     }
     if (!self.is_tensor_layout()) {
         throw std::runtime_error(
             std::string(api) +
-            " only supports zero-copy views for Layout.SoA attributes. Use "
-            "the explicit *_copy API for AoS/AoSoA attributes.");
+            " only supports zero-copy views for 'soa' attributes. Use "
+            "the explicit *_copy API for 'aos'/'aosoa' attributes.");
     }
     if (location == rxmesh::HOST && !self.is_host_allocated()) {
         throw std::runtime_error(
@@ -98,7 +97,7 @@ py::capsule attribute_to_dlpack(std::shared_ptr<PyAttributeBase> self,
         dlpack_util::synchronize_export_stream(std::move(stream));
     } else if (!stream.is_none()) {
         throw std::invalid_argument(
-            "Attribute.to_dlpack(Location.HOST) requires stream=None.");
+            "Attribute.to_dlpack('host') requires stream=None.");
     }
 
     auto* managed  = new dlpack::DLManagedTensor();
@@ -229,8 +228,8 @@ void copy_dlpack_to_attribute(PyAttribute<T, HandleT>& self,
 
     if ((target & (rxmesh::HOST | rxmesh::DEVICE)) == rxmesh::LOCATION_NONE) {
         throw std::invalid_argument(
-            "Attribute.from_dlpack_copy() target must include Location.HOST "
-            "or Location.DEVICE.");
+            "Attribute.from_dlpack_copy() target must include 'host' or "
+            "'device'.");
     }
 
     const int64_t rows = static_cast<int64_t>(self.element_count());
@@ -391,72 +390,117 @@ void register_attribute(py::module_& m)
         .def_property_readonly("element_count", &PyAttributeBase::element_count)
         .def_property_readonly("shape", &PyAttributeBase::shape)
         .def_property_readonly("bytes", &PyAttributeBase::bytes)
-        .def_property_readonly("allocated", &PyAttributeBase::allocated)
-        .def_property_readonly("layout", &PyAttributeBase::layout)
+        .def_property_readonly(
+            "allocated",
+            [](const PyAttributeBase& self) {
+                return location_name(parse_location(self.allocated()));
+            })
+        .def_property_readonly(
+            "layout",
+            [](const PyAttributeBase& self) {
+                return layout_name(parse_layout(self.layout()));
+            })
         .def_property_readonly("is_host_allocated",
                                &PyAttributeBase::is_host_allocated)
         .def_property_readonly("is_device_allocated",
                                &PyAttributeBase::is_device_allocated)
         .def_property_readonly("is_tensor_layout",
                                &PyAttributeBase::is_tensor_layout)
-        .def("reset",
-             &PyAttributeBase::reset,
-             py::arg("value"),
-             py::arg("location") = static_cast<int>(rxmesh::LOCATION_ALL))
-        .def("move",
-             &PyAttributeBase::move,
-             py::arg("source"),
-             py::arg("target"))
-        .def("copy_from",
-             &PyAttributeBase::copy_from,
-             py::arg("other"),
-             py::arg("source") = static_cast<int>(rxmesh::LOCATION_ALL),
-             py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL))
+        .def(
+            "reset",
+            [](PyAttributeBase& self, py::object value, py::object location) {
+                self.reset(std::move(value),
+                           static_cast<int>(parse_location(location)));
+            },
+            py::arg("value"),
+            py::arg("location") = "all")
+        .def(
+            "move",
+            [](PyAttributeBase& self, py::object source, py::object target) {
+                self.move(static_cast<int>(parse_location(source)),
+                          static_cast<int>(parse_location(target)));
+            },
+            py::arg("source"),
+            py::arg("target"))
+        .def(
+            "copy_from",
+            [](PyAttributeBase& self,
+               PyAttributeBase& other,
+               py::object       source,
+               py::object       target) {
+                self.copy_from(other,
+                               static_cast<int>(parse_location(source)),
+                               static_cast<int>(parse_location(target)));
+            },
+            py::arg("other"),
+            py::arg("source") = "all",
+            py::arg("target") = "all")
         .def(
             "to_numpy",
-            [](std::shared_ptr<PyAttributeBase> self, int location) {
-                return self->to_numpy(location, py::cast(self));
+            [](std::shared_ptr<PyAttributeBase> self, py::object location) {
+                return self->to_numpy(
+                    static_cast<int>(parse_location(location)), py::cast(self));
             },
-            py::arg("location") = static_cast<int>(rxmesh::HOST),
-            "Return a zero-copy NumPy view of true Layout.SoA HOST memory "
+            py::arg("location") = "host",
+            "Return a zero-copy NumPy view of true 'soa' host memory "
             "with rows in RXMesh linear element order.")
-        .def("to_numpy_copy",
-             &PyAttributeBase::to_numpy_copy,
-             py::arg("source") = static_cast<int>(rxmesh::HOST),
-             "Copy this attribute to a NumPy array with rows in RXMesh "
-             "linear element order.")
-        .def("from_numpy_copy",
-             &PyAttributeBase::from_numpy_copy,
-             py::arg("values"),
-             py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
-             "Copy a NumPy-compatible array in RXMesh linear element order "
-             "into attribute memory.")
-        .def("from_dlpack_copy",
-             &attribute_from_dlpack_copy,
-             py::arg("source"),
-             py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
-             "Copy a CPU or CUDA DLPack tensor in RXMesh linear element "
-             "order into attribute memory.")
+        .def(
+            "to_numpy_copy",
+            [](PyAttributeBase& self, py::object source) {
+                return self.to_numpy_copy(
+                    static_cast<int>(parse_location(source)));
+            },
+            py::arg("source") = "host",
+            "Copy this attribute to a NumPy array with rows in RXMesh "
+            "linear element order.")
+        .def(
+            "from_numpy_copy",
+            [](PyAttributeBase& self, py::array values, py::object target) {
+                self.from_numpy_copy(std::move(values),
+                                     static_cast<int>(parse_location(target)));
+            },
+            py::arg("values"),
+            py::arg("target") = "all",
+            "Copy a NumPy-compatible array in RXMesh linear element order "
+            "into attribute memory.")
+        .def(
+            "from_dlpack_copy",
+            [](PyAttributeBase& self, py::object source, py::object target) {
+                attribute_from_dlpack_copy(
+                    self,
+                    std::move(source),
+                    static_cast<int>(parse_location(target)));
+            },
+            py::arg("source"),
+            py::arg("target") = "all",
+            "Copy a CPU or CUDA DLPack tensor in RXMesh linear element "
+            "order into attribute memory.")
         .def("to_matrix_copy",
              &PyAttributeBase::to_matrix_copy,
              "Copy this attribute into a DenseMatrix using RXMesh handle "
              "order.")
-        .def("from_matrix_copy",
-             &PyAttributeBase::from_matrix_copy,
-             py::arg("matrix"),
-             py::arg("target") = static_cast<int>(rxmesh::LOCATION_ALL),
-             "Copy a dense matrix into RXMesh attribute memory.")
+        .def(
+            "from_matrix_copy",
+            [](PyAttributeBase& self, py::object matrix, py::object target) {
+                self.from_matrix_copy(std::move(matrix),
+                                      static_cast<int>(parse_location(target)));
+            },
+            py::arg("matrix"),
+            py::arg("target") = "all",
+            "Copy a dense matrix into RXMesh attribute memory.")
         .def(
             "to_dlpack",
             [](std::shared_ptr<PyAttributeBase> self,
-               int                              location,
+               py::object                       location,
                py::object                       stream) {
                 return attribute_to_dlpack(
-                    std::move(self), location, std::move(stream));
+                    std::move(self),
+                    static_cast<int>(parse_location(location)),
+                    std::move(stream));
             },
-            py::arg("location") = static_cast<int>(rxmesh::DEVICE),
+            py::arg("location") = "device",
             py::arg("stream")   = py::none(),
-            "Return a DLPack capsule that views true Layout.SoA RXMesh "
+            "Return a DLPack capsule that views true 'soa' RXMesh "
             "memory in linear element order.")
         .def(
             "__dlpack__",

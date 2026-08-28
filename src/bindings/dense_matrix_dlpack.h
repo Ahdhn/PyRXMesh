@@ -70,8 +70,7 @@ inline py::capsule dense_matrix_to_dlpack(std::shared_ptr<PyDenseMatrix> self,
     const auto loc = parse_location(location);
     if (loc != rxmesh::HOST && loc != rxmesh::DEVICE) {
         throw std::invalid_argument(
-            "DenseMatrix.to_dlpack() location must be Location.HOST or "
-            "Location.DEVICE.");
+            "DenseMatrix.to_dlpack() location must be 'host' or 'device'.");
     }
     if (loc == rxmesh::HOST && !self->is_host_allocated()) {
         throw std::runtime_error(
@@ -86,7 +85,7 @@ inline py::capsule dense_matrix_to_dlpack(std::shared_ptr<PyDenseMatrix> self,
     if (loc == rxmesh::HOST) {
         if (!stream.is_none()) {
             throw std::invalid_argument(
-                "DenseMatrix.to_dlpack(Location.HOST) requires stream=None.");
+                "DenseMatrix.to_dlpack('host') requires stream=None.");
         }
     } else {
         CUDA_ERROR(cudaGetDevice(&device_id));

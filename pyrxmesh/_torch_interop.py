@@ -29,11 +29,11 @@ def _torch_dtype_name(dtype):
 
 
 def _device(owner, location):
-    if location == Location.HOST:
+    if location in ("host", Location.HOST):
         return (1, 0)
-    if location == Location.DEVICE:
+    if location in ("device", Location.DEVICE):
         return owner.__dlpack_device__()
-    raise ValueError("location must be Location.HOST or Location.DEVICE")
+    raise ValueError("location must be 'host' or 'device'")
 
 
 class _DlpackView:
@@ -52,7 +52,7 @@ def _view(owner, location, exporter):
     return _DlpackView(exporter, _device(owner, location))
 
 
-def _dense_matrix_to_torch(self, location=Location.DEVICE):
+def _dense_matrix_to_torch(self, location="device"):
     torch = _require_torch()
     return torch.utils.dlpack.from_dlpack(
         _view(
@@ -72,17 +72,17 @@ def _dense_matrix_from_torch_view(source, order="col_major"):
     return DenseMatrix.from_dlpack_view(source, order=order)
 
 
-def _sparse_matrix_to_torch(self, location=Location.DEVICE):
+def _sparse_matrix_to_torch(self, location="device"):
     torch = _require_torch()
     device = (
         (1, 0)
-        if location == Location.HOST
+        if location in ("host", Location.HOST)
         else (2, torch.cuda.current_device())
-        if location == Location.DEVICE
+        if location in ("device", Location.DEVICE)
         else None
     )
     if device is None:
-        raise ValueError("location must be Location.HOST or Location.DEVICE")
+        raise ValueError("location must be 'host' or 'device'")
 
     def convert(exporter):
         return torch.utils.dlpack.from_dlpack(
@@ -102,7 +102,7 @@ def _sparse_matrix_to_torch(self, location=Location.DEVICE):
 
 
 def _sparse_matrix_from_torch_values_copy(
-    self, values, target=Location.ALL, stream=None
+    self, values, target="all", stream=None
 ):
     tensor = values.detach() if hasattr(values, "detach") else values
     self.from_dlpack_values_copy(tensor, target=target, stream=stream)
@@ -123,7 +123,7 @@ def _sparse_matrix_from_torch_copy(source, dtype=None, stream=None):
     )
 
 
-def _attribute_to_torch(self, location=Location.DEVICE):
+def _attribute_to_torch(self, location="device"):
     torch = _require_torch()
     return torch.utils.dlpack.from_dlpack(
         _view(
@@ -134,7 +134,7 @@ def _attribute_to_torch(self, location=Location.DEVICE):
     )
 
 
-def _attribute_from_torch_copy(self, values, target=Location.ALL):
+def _attribute_from_torch_copy(self, values, target="all"):
     tensor = values.detach() if hasattr(values, "detach") else values
     self.from_dlpack_copy(tensor, target=target)
     return self

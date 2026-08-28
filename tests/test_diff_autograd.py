@@ -70,15 +70,15 @@ def _energy(mesh, weight=0.56):
     )
 
 
-def _attribute(mesh, name, values, layout=rx.Layout.SoA):
+def _attribute(mesh, name, values, layout="soa"):
     attr = mesh.add_vertex_attribute(
         name,
         dtype="float32",
         dim=3,
-        location=rx.Location.ALL,
+        location="all",
         layout=layout,
     )
-    attr.from_numpy_copy(values, target=rx.Location.ALL)
+    attr.from_numpy_copy(values, target="all")
     return attr
 
 
@@ -120,20 +120,20 @@ def test_low_level_results_require_evaluate(tiny_mesh):
 
 
 @pytest.mark.parametrize("layout",
-                         [rx.Layout.SoA,
-                          rx.Layout.AoS,
-                          rx.Layout.AoSoA])
+                         ["soa",
+                          "aos",
+                          "aosoa"])
 def test_low_level_evaluate_matches_reference(tiny_mesh, layout):
     values = _positions(tiny_mesh, 0.31)
     expected_loss, expected_gradient = _reference(tiny_mesh, values)
     energy = _energy(tiny_mesh)
-    attr = _attribute(tiny_mesh, f"positions_{int(layout)}", values, layout)
+    attr = _attribute(tiny_mesh, f"positions_{layout}", values, layout)
 
     assert energy.evaluate(attr) == pytest.approx(expected_loss, rel=5e-4)
     assert energy.has_evaluated
     view = energy.gradient_view
     assert view.is_read_only
-    _assert_gradient(view.to_torch(rx.Location.DEVICE), expected_gradient)
+    _assert_gradient(view.to_torch("device"), expected_gradient)
 
 
 def test_gradient_snapshot_is_stable(tiny_mesh):
@@ -142,9 +142,9 @@ def test_gradient_snapshot_is_stable(tiny_mesh):
     energy = _energy(tiny_mesh)
     attr = _attribute(tiny_mesh, "snapshot_positions", first)
     energy.evaluate(attr)
-    snapshot = energy.gradient_snapshot().to_torch(rx.Location.DEVICE).clone()
+    snapshot = energy.gradient_snapshot().to_torch("device").clone()
 
-    attr.from_numpy_copy(second, target=rx.Location.ALL)
+    attr.from_numpy_copy(second, target="all")
     energy.evaluate(attr)
     _, expected_first = _reference(tiny_mesh, first)
     _assert_gradient(snapshot, expected_first)

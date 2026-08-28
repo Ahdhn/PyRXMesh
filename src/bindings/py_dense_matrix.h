@@ -253,7 +253,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
         const auto loc = parse_location(location);
         if (loc != rxmesh::HOST) {
             throw std::invalid_argument(
-                "DenseMatrix.to_numpy() only supports Location.HOST.");
+                "DenseMatrix.to_numpy() only supports 'host'.");
         }
         if (!is_host_allocated()) {
             throw std::runtime_error(
@@ -283,7 +283,7 @@ struct PyDenseMatrixT final : PyDenseMatrix
         const auto src = parse_location(source);
         if (src != rxmesh::HOST) {
             throw std::invalid_argument(
-                "DenseMatrix.to_numpy_copy() only supports Location.HOST.");
+                "DenseMatrix.to_numpy_copy() only supports 'host'.");
         }
         const int      r = matrix->rows();
         const int      c = matrix->cols();
