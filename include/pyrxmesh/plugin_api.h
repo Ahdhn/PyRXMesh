@@ -18,7 +18,8 @@
 #include "rxmesh/util/macros.h"
 
 #ifndef PYRXMESH_PLUGIN_ABI_VERSION
-#error "PYRXMESH_PLUGIN_ABI_VERSION must be provided by the PyRXMesh CMake target"
+#error \
+    "PYRXMESH_PLUGIN_ABI_VERSION must be provided by the PyRXMesh CMake target"
 #endif
 
 #ifndef PYRXMESH_BUILD_CONFIG
@@ -210,6 +211,36 @@ void for_each(py::handle    mesh_object,
               cudaStream_t  stream   = nullptr)
 {
     mesh(mesh_object).for_each<op, blockThreads>(user_lambda, oriented, stream);
+    using namespace rxmesh;
+    CUDA_ERROR(cudaGetLastError());
+}
+
+template <typename LambdaT>
+void for_each_vertex(py::handle    mesh_object,
+                     const LambdaT user_lambda,
+                     cudaStream_t  stream = nullptr)
+{
+    mesh(mesh_object).for_each_vertex(rxmesh::DEVICE, user_lambda, stream);
+    using namespace rxmesh;
+    CUDA_ERROR(cudaGetLastError());
+}
+
+template <typename LambdaT>
+void for_each_edge(py::handle    mesh_object,
+                   const LambdaT user_lambda,
+                   cudaStream_t  stream = nullptr)
+{
+    mesh(mesh_object).for_each_edge(rxmesh::DEVICE, user_lambda, stream);
+    using namespace rxmesh;
+    CUDA_ERROR(cudaGetLastError());
+}
+
+template <typename LambdaT>
+void for_each_face(py::handle    mesh_object,
+                   const LambdaT user_lambda,
+                   cudaStream_t  stream = nullptr)
+{
+    mesh(mesh_object).for_each_face(rxmesh::DEVICE, user_lambda, stream);
     using namespace rxmesh;
     CUDA_ERROR(cudaGetLastError());
 }
