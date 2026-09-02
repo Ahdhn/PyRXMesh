@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
 from . import Attribute, DenseMatrix, Location, SparseMatrix
 
+if TYPE_CHECKING:
+    import torch
 
-def _require_torch():
+
+
+def _require_torch() -> Any:
     try:
         import torch
     except ImportError as exc:
@@ -15,7 +22,7 @@ def _require_torch():
     return torch
 
 
-def _torch_dtype_name(dtype):
+def _torch_dtype_name(dtype: torch.dtype) -> str:
     torch = _require_torch()
     names = {
         torch.float32: "float32",
@@ -28,7 +35,7 @@ def _torch_dtype_name(dtype):
         raise TypeError(f"Unsupported torch dtype: {dtype}") from exc
 
 
-def _device(owner, location):
+def _device(owner: Any, location: str | int) -> tuple[int, int]:
     if location in ("host", Location.HOST):
         return (1, 0)
     if location in ("device", Location.DEVICE):
@@ -37,22 +44,33 @@ def _device(owner, location):
 
 
 class _DlpackView:
-    def __init__(self, exporter, device):
+    def __init__(
+        self,
+        exporter: Callable[[int | None], object],
+        device: tuple[int, int],
+    ) -> None:
         self._exporter = exporter
         self._device = device
 
-    def __dlpack__(self, stream=None):
+    def __dlpack__(self, stream: int | None = None) -> object:
         return self._exporter(stream)
 
-    def __dlpack_device__(self):
+    def __dlpack_device__(self) -> tuple[int, int]:
         return self._device
 
 
-def _view(owner, location, exporter):
+def _view(
+    owner: Any,
+    location: str | int,
+    exporter: Callable[[int | None], object],
+) -> _DlpackView:
     return _DlpackView(exporter, _device(owner, location))
 
 
-def _dense_matrix_to_torch(self, location="device"):
+def _dense_matrix_to_torch(
+    self: DenseMatrix,
+    location: str | int = "device",
+) -> torch.Tensor:
     torch = _require_torch()
     return torch.utils.dlpack.from_dlpack(
         _view(
@@ -63,16 +81,25 @@ def _dense_matrix_to_torch(self, location="device"):
     )
 
 
-def _dense_matrix_from_torch_copy(source, order="col_major"):
+def _dense_matrix_from_torch_copy(
+    source: torch.Tensor,
+    order: str = "col_major",
+) -> DenseMatrix:
     tensor = source.detach() if hasattr(source, "detach") else source
     return DenseMatrix.from_dlpack_copy(tensor, order=order)
 
 
-def _dense_matrix_from_torch_view(source, order="col_major"):
+def _dense_matrix_from_torch_view(
+    source: torch.Tensor,
+    order: str = "col_major",
+) -> DenseMatrix:
     return DenseMatrix.from_dlpack_view(source, order=order)
 
 
-def _sparse_matrix_to_torch(self, location="device"):
+def _sparse_matrix_to_torch(
+    self: SparseMatrix,
+    location: str | int = "device",
+) -> torch.Tensor:
     torch = _require_torch()
     device = (
         (1, 0)
@@ -84,7 +111,7 @@ def _sparse_matrix_to_torch(self, location="device"):
     if device is None:
         raise ValueError("location must be 'host' or 'device'")
 
-    def convert(exporter):
+    def convert(exporter: Callable[..., object]) -> torch.Tensor:
         return torch.utils.dlpack.from_dlpack(
             _DlpackView(
                 lambda stream: exporter(location, stream=stream), device
@@ -102,14 +129,21 @@ def _sparse_matrix_to_torch(self, location="device"):
 
 
 def _sparse_matrix_from_torch_values_copy(
-    self, values, target="all", stream=None
-):
+    self: SparseMatrix,
+    values: torch.Tensor,
+    target: str | int = "all",
+    stream: int | None = None,
+) -> SparseMatrix:
     tensor = values.detach() if hasattr(values, "detach") else values
     self.from_dlpack_values_copy(tensor, target=target, stream=stream)
     return self
 
 
-def _sparse_matrix_from_torch_copy(source, dtype=None, stream=None):
+def _sparse_matrix_from_torch_copy(
+    source: torch.Tensor,
+    dtype: str | None = None,
+    stream: int | None = None,
+) -> SparseMatrix:
     torch = _require_torch()
     if source.layout != torch.sparse_csr:
         raise TypeError("source must be a torch sparse CSR tensor")
@@ -123,7 +157,10 @@ def _sparse_matrix_from_torch_copy(source, dtype=None, stream=None):
     )
 
 
-def _attribute_to_torch(self, location="device"):
+def _attribute_to_torch(
+    self: Attribute,
+    location: str | int = "device",
+) -> torch.Tensor:
     torch = _require_torch()
     return torch.utils.dlpack.from_dlpack(
         _view(
@@ -134,7 +171,11 @@ def _attribute_to_torch(self, location="device"):
     )
 
 
-def _attribute_from_torch_copy(self, values, target="all"):
+def _attribute_from_torch_copy(
+    self: Attribute,
+    values: torch.Tensor,
+    target: str | int = "all",
+) -> Attribute:
     tensor = values.detach() if hasattr(values, "detach") else values
     self.from_dlpack_copy(tensor, target=target)
     return self

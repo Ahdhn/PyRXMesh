@@ -95,7 +95,6 @@ def main(argv: list[str] | None = None) -> None:
     scaffold_main(
         argv,
         description=__doc__ or "",
-        help_text="Create a custom kernel plugin",
         example="my_kernels",
         initializer=init_plugin,
     )

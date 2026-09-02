@@ -1,16 +1,14 @@
-"""SciPy interop helpers attached to ``SparseMatrix``.
-
-This module is imported automatically by ``pyrxmesh/__init__.py`` and patches
-``to_scipy_csr`` / ``to_scipy_csr_copy`` onto ``SparseMatrix``. ``scipy`` is
-imported lazily on first call, so importing this module is cheap.
-"""
+"""Lazy SciPy helpers attached to ``SparseMatrix``."""
 
 from __future__ import annotations
+
+from typing import Any
 
 from . import SparseMatrix
 
 
-def _require_scipy_sparse(api):
+
+def _require_scipy_sparse(api: str) -> Any:
     try:
         import scipy.sparse as scipy_sparse
     except ImportError as exc:
@@ -21,7 +19,7 @@ def _require_scipy_sparse(api):
     return scipy_sparse
 
 
-def _sparse_matrix_to_scipy_csr(self):
+def _sparse_matrix_to_scipy_csr(self: SparseMatrix) -> Any:
     scipy_sparse = _require_scipy_sparse("to_scipy_csr")
     row_ptr, col_idx, values = self.to_numpy("host")
     return scipy_sparse.csr_matrix(
@@ -29,9 +27,15 @@ def _sparse_matrix_to_scipy_csr(self):
     )
 
 
-def _sparse_matrix_to_scipy_csr_copy(self, source="host", stream=None):
+def _sparse_matrix_to_scipy_csr_copy(
+    self: SparseMatrix,
+    source: str | int = "host",
+    stream: int | None = None,
+) -> Any:
     scipy_sparse = _require_scipy_sparse("to_scipy_csr_copy")
-    row_ptr, col_idx, values = self.to_numpy_copy(source=source, stream=stream)
+    row_ptr, col_idx, values = self.to_numpy_copy(
+        source=source, stream=stream
+    )
     return scipy_sparse.csr_matrix(
         (values, col_idx, row_ptr), shape=self.shape
     )

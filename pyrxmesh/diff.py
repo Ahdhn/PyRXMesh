@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import weakref
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any
 
 from . import HessianSparseMatrix, JacobianSparseMatrix
-from ._rxmesh import ElementKind, ScalarEnergy
+from ._rxmesh import ElementKind, RXMeshStatic, ScalarEnergy
+
+if TYPE_CHECKING:
+    import torch
+
+    from ._typing import ElementName
 
 
 _ELEMENT_KIND = {
@@ -13,11 +20,13 @@ _ELEMENT_KIND = {
     "edge": ElementKind.Edge,
     "face": ElementKind.Face,
 }
-_LINEAR_TO_GLOBAL_INDICES = weakref.WeakKeyDictionary()
-_TORCH_FUNCTION = None
+_LINEAR_TO_GLOBAL_INDICES: weakref.WeakKeyDictionary[
+    RXMeshStatic, dict[ElementKind, torch.Tensor]
+] = weakref.WeakKeyDictionary()
+_TORCH_FUNCTION: Any = None
 
 
-def _require_torch():
+def _require_torch() -> Any:
     try:
         import torch
     except ImportError as exc:
@@ -27,7 +36,7 @@ def _require_torch():
     return torch
 
 
-def _shape2(shape) -> tuple[int, int]:
+def _shape2(shape: Sequence[int]) -> tuple[int, int]:
     try:
         rows, cols = map(int, shape)
     except (TypeError, ValueError) as exc:
@@ -37,28 +46,39 @@ def _shape2(shape) -> tuple[int, int]:
     return rows, cols
 
 
-def empty_soa(shape, *, dtype=None, device=None, requires_grad=False):
+def empty_soa(
+    shape: Sequence[int],
+    *,
+    dtype: torch.dtype | None = None,
+    device: torch.device | str | int | None = None,
+    requires_grad: bool = False,
+) -> torch.Tensor:
     """Allocate a logical (n, k) Tensor with RXMesh strides (1, n)."""
 
     torch = _require_torch()
     rows, cols = _shape2(shape)
-    return torch.empty_strided(
+    result: torch.Tensor = torch.empty_strided(
         (rows, cols),
         (1, rows),
         dtype=dtype,
         device=device,
         requires_grad=requires_grad,
     )
+    return result
 
 
-def _kind_from_name(element: str):
+def _kind_from_name(element: ElementName) -> ElementKind:
     try:
         return _ELEMENT_KIND[element]
     except KeyError as exc:
         raise ValueError("element must be 'vertex', 'edge', or 'face'") from exc
 
 
-def _linear_to_global_index(mesh, element: str, device):
+def _linear_to_global_index(
+    mesh: RXMeshStatic,
+    element: ElementName,
+    device: torch.device | str | int,
+) -> torch.Tensor:
     torch = _require_torch()
     kind = _kind_from_name(element)
     indices = _LINEAR_TO_GLOBAL_INDICES.get(mesh)
@@ -78,7 +98,12 @@ def _linear_to_global_index(mesh, element: str, device):
     return index
 
 
-def to_linear_soa(mesh, values, *, element="vertex"):
+def to_linear_soa(
+    mesh: RXMeshStatic,
+    values: torch.Tensor,
+    *,
+    element: ElementName = "vertex",
+) -> torch.Tensor:
     """Gather global-order rows into RXMesh linear order and SoA storage."""
 
     torch = _require_torch()
@@ -92,7 +117,12 @@ def to_linear_soa(mesh, values, *, element="vertex"):
     return output
 
 
-def to_global_order(mesh, values, *, element="vertex"):
+def to_global_order(
+    mesh: RXMeshStatic,
+    values: torch.Tensor,
+    *,
+    element: ElementName = "vertex",
+) -> torch.Tensor:
     """Scatter RXMesh linear rows into global order."""
 
     torch = _require_torch()
@@ -101,12 +131,18 @@ def to_global_order(mesh, values, *, element="vertex"):
     index = _linear_to_global_index(mesh, element, values.device)
     if values.shape[0] != index.numel():
         raise ValueError("values row count does not match the mesh")
-    output = torch.empty_like(values, memory_format=torch.contiguous_format)
+    output: torch.Tensor = torch.empty_like(
+        values, memory_format=torch.contiguous_format
+    )
     output.index_copy_(0, index, values)
     return output
 
 
-def _validate_energy_input(energy, x, copy: str) -> None:
+def _validate_energy_input(
+    energy: ScalarEnergy,
+    x: torch.Tensor,
+    copy: str,
+) -> None:
     torch = _require_torch()
     if not isinstance(x, torch.Tensor) or x.layout != torch.strided:
         raise TypeError("ScalarEnergy.torch() expects a strided Tensor")
@@ -129,11 +165,14 @@ def _validate_energy_input(energy, x, copy: str) -> None:
         raise ValueError("copy must be 'auto' or 'never'")
 
 
-def _is_soa(x) -> bool:
+def _is_soa(x: torch.Tensor) -> bool:
     return tuple(x.stride()) == (1, x.shape[0])
 
 
-def _prepare_torch_input(x, copy: str):
+def _prepare_torch_input(
+    x: torch.Tensor,
+    copy: str,
+) -> torch.Tensor:
     if _is_soa(x):
         return x
     if copy == "never":
@@ -146,16 +185,21 @@ def _prepare_torch_input(x, copy: str):
     return output
 
 
-def _stream_token(stream) -> int:
+def _stream_token(stream: torch.cuda.Stream) -> int:
     raw = int(stream.cuda_stream)
     return 1 if raw == 0 else raw
 
 
-def _run_torch_forward(energy, x, copy, with_gradient):
+def _run_torch_forward(
+    energy: ScalarEnergy,
+    x: torch.Tensor,
+    copy: str,
+    with_gradient: bool,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     torch = _require_torch()
     stream = torch.cuda.current_stream()
     effective_input = _prepare_torch_input(x, copy)
-    gradient = (
+    gradient: torch.Tensor | None = (
         torch.empty(
             (energy.element_count, energy.variable_dim),
             dtype=x.dtype,
@@ -164,7 +208,7 @@ def _run_torch_forward(energy, x, copy, with_gradient):
         if with_gradient
         else None
     )
-    term_losses = torch.empty(
+    term_losses: torch.Tensor = torch.empty(
         energy.term_count, dtype=x.dtype, device=x.device
     )
 
@@ -181,7 +225,7 @@ def _run_torch_forward(energy, x, copy, with_gradient):
     return term_losses.sum(), gradient
 
 
-def _torch_function():
+def _torch_function() -> Any:
     global _TORCH_FUNCTION
     if _TORCH_FUNCTION is not None:
         return _TORCH_FUNCTION
@@ -189,17 +233,28 @@ def _torch_function():
     torch = _require_torch()
     once_differentiable = torch.autograd.function.once_differentiable
 
-    class _ScalarEnergyFunction(torch.autograd.Function):
+    class _ScalarEnergyFunction(  # type: ignore[misc, name-defined]
+        torch.autograd.Function
+    ):
         @staticmethod
-        def forward(ctx, x, energy, copy):
+        def forward(
+            ctx: Any,
+            x: torch.Tensor,
+            energy: ScalarEnergy,
+            copy: str,
+        ) -> torch.Tensor:
             loss, gradient = _run_torch_forward(energy, x, copy, True)
+            assert gradient is not None
             ctx.save_for_backward(gradient)
             ctx.energy = energy
             return loss
 
         @staticmethod
         @once_differentiable
-        def backward(ctx, grad_output):
+        def backward(
+            ctx: Any,
+            grad_output: torch.Tensor,
+        ) -> tuple[torch.Tensor, None, None]:
             (gradient,) = ctx.saved_tensors
             return gradient * grad_output, None, None
 
@@ -207,7 +262,12 @@ def _torch_function():
     return _TORCH_FUNCTION
 
 
-def _energy_torch(self, x, *, copy="auto"):
+def _energy_torch(
+    self: ScalarEnergy,
+    x: torch.Tensor,
+    *,
+    copy: str = "auto",
+) -> torch.Tensor:
     """Evaluate the energy as a first-order PyTorch autograd layer.
 
     copy='auto' borrows an RXMesh-SoA input and stages any other accepted
@@ -217,11 +277,12 @@ def _energy_torch(self, x, *, copy="auto"):
     torch = _require_torch()
     _validate_energy_input(self, x, copy)
     if torch.is_grad_enabled() and x.requires_grad:
-        return _torch_function().apply(x, self, copy)
+        result: torch.Tensor = _torch_function().apply(x, self, copy)
+        return result
     return _run_torch_forward(self, x, copy, False)[0]
 
 
-ScalarEnergy.torch = _energy_torch
+ScalarEnergy.torch = _energy_torch  # type: ignore[method-assign]
 
 
 __all__ = [

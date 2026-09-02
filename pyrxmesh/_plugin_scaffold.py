@@ -99,17 +99,14 @@ def scaffold_main(
     argv: list[str] | None,
     *,
     description: str,
-    help_text: str,
     example: str,
     initializer: Callable[[str, Path, bool], Path],
 ) -> None:
     parser = argparse.ArgumentParser(description=description)
-    commands = parser.add_subparsers(dest="command", required=True)
-    init = commands.add_parser("init", help=help_text)
-    init.add_argument(
+    parser.add_argument(
         "module",
         help=f"Python module name, for example {example}")
-    init.add_argument("--output-dir", type=Path, default=Path.cwd())
-    init.add_argument("--force", action="store_true")
+    parser.add_argument("--output-dir", type=Path, default=Path.cwd())
+    parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
     print(initializer(args.module, args.output_dir, args.force))

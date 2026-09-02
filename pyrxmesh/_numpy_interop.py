@@ -1,13 +1,9 @@
-"""NumPy interop helpers attached to ``SparseMatrix``.
-
-Overrides ``SparseMatrix.multiply_vector`` so it accepts a NumPy 1D/2D array
-in addition to a ``DenseMatrix``. NumPy is already a hard PyRXMesh
-dependency, so this module is always importable.
-"""
+"""NumPy helpers attached to ``SparseMatrix``."""
 
 from __future__ import annotations
 
 import numpy as np
+import numpy.typing as npt
 
 from . import DenseMatrix, SparseMatrix
 
@@ -15,7 +11,11 @@ from . import DenseMatrix, SparseMatrix
 _spmat_multiply_vector = SparseMatrix.multiply_vector
 
 
-def _sparse_matrix_multiply_vector(self, vector, stream=None):
+def _sparse_matrix_multiply_vector(
+    self: SparseMatrix,
+    vector: DenseMatrix | npt.ArrayLike,
+    stream: int | None = None,
+) -> DenseMatrix:
     if isinstance(vector, DenseMatrix):
         return _spmat_multiply_vector(self, vector, stream)
 
