@@ -896,9 +896,16 @@ class RXMeshStatic:
         Open the Polyscope viewer for this mesh.
         """
 
+    @typing.overload
     def __init__(self, file_path: str, patcher_file: str='', patch_size: typing.SupportsInt | typing.SupportsIndex=512, capacity_factor: typing.SupportsFloat | typing.SupportsIndex=1.0, patch_alloc_factor: typing.SupportsFloat | typing.SupportsIndex=1.0, lp_hashtable_load_factor: typing.SupportsFloat | typing.SupportsIndex=0.800000011920929) -> None:
         """
         Load a static triangle mesh from an OBJ file.
+        """
+
+    @typing.overload
+    def __init__(self, vertices: typing.Annotated[numpy.typing.ArrayLike, numpy.float32], faces: typing.Annotated[numpy.typing.ArrayLike, numpy.uint32], patcher_file: str='', patch_size: typing.SupportsInt | typing.SupportsIndex=512, capacity_factor: typing.SupportsFloat | typing.SupportsIndex=1.0, patch_alloc_factor: typing.SupportsFloat | typing.SupportsIndex=1.0, lp_hashtable_load_factor: typing.SupportsFloat | typing.SupportsIndex=0.800000011920929) -> None:
+        """
+        Create a static triangle mesh from (n, 3) vertices and (m, 3) face arrays.
         """
 
     def __rxmesh_capsule__(self) -> typing_extensions.CapsuleType:

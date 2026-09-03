@@ -8,7 +8,7 @@ import pytest
 import scipy.sparse as sp
 
 
-def test_geometry_create_plane() -> None:    
+def test_geometry_create_plane() -> None:
     vertices, faces = rx.create_plane(
         4,
         3,
@@ -26,10 +26,21 @@ def test_geometry_create_plane() -> None:
     assert np.all(faces < len(vertices))
 
 
+def test_rxmesh_static_from_arrays() -> None:
+    vertices, faces = rx.create_plane(4, 3, dx=0.5)
+
+    mesh = rx.RXMeshStatic(vertices, faces, patch_size=32)
+
+    assert mesh.num_vertices == vertices.shape[0]
+    assert mesh.num_faces == faces.shape[0]
+    np.testing.assert_allclose(mesh.vertices(order="global"), vertices)
+    np.testing.assert_array_equal(mesh.faces(order="global"), faces)
+
+
 def test_io_export_obj(mesh, tmp_path: Path) -> None:
     coords = mesh.input_vertex_coordinates()
 
-    output_path = tmp_path / "sphere.obj"    
+    output_path = tmp_path / "sphere.obj"
     mesh.export_obj(str(output_path), coords)
 
     assert output_path.exists()
@@ -38,7 +49,7 @@ def test_io_export_obj(mesh, tmp_path: Path) -> None:
     assert "\nf " in f"\n{text}"
 
 
-def test_io_export_obj_rejects_non_vertex_coords(mesh, tmp_path: Path) -> None:    
+def test_io_export_obj_rejects_non_vertex_coords(mesh, tmp_path: Path) -> None:
     edge_attr = mesh.add_edge_attribute("bad_coords", dtype="float32", dim=3)
 
     with pytest.raises(ValueError):

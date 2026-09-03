@@ -12,6 +12,51 @@ std::shared_ptr<rxmesh::RXMeshStatic> rxmesh_static_from_files(
     return std::make_shared<rxmesh::RXMeshStatic>(file_paths, patch_size);
 }
 
+std::shared_ptr<rxmesh::RXMeshStatic> rxmesh_static_from_arrays(
+    py::array_t<rx_coord_t, py::array::c_style | py::array::forcecast> vertices,
+    py::array_t<uint32_t, py::array::c_style | py::array::forcecast>   faces,
+    const std::string& patcher_file,
+    uint32_t           patch_size,
+    float              capacity_factor,
+    float              patch_alloc_factor,
+    float              lp_hashtable_load_factor)
+{
+    if (vertices.ndim() != 2 || vertices.shape(1) != 3) {
+        throw py::value_error("vertices must have shape (n, 3)");
+    }
+    if (faces.ndim() != 2 || faces.shape(1) != 3) {
+        throw py::value_error("faces must have shape (m, 3)");
+    }
+
+    const auto vertices_view = vertices.unchecked<2>();
+    const auto faces_view    = faces.unchecked<2>();
+    std::vector<std::vector<rx_coord_t>> vertex_list(
+        static_cast<size_t>(vertices.shape(0)), std::vector<rx_coord_t>(3));
+    std::vector<std::vector<uint32_t>> face_list(
+        static_cast<size_t>(faces.shape(0)), std::vector<uint32_t>(3));
+
+    for (py::ssize_t i = 0; i < vertices.shape(0); ++i) {
+        for (py::ssize_t j = 0; j < 3; ++j) {
+            vertex_list[static_cast<size_t>(i)][static_cast<size_t>(j)] =
+                vertices_view(i, j);
+        }
+    }
+    for (py::ssize_t i = 0; i < faces.shape(0); ++i) {
+        for (py::ssize_t j = 0; j < 3; ++j) {
+            face_list[static_cast<size_t>(i)][static_cast<size_t>(j)] =
+                faces_view(i, j);
+        }
+    }
+
+    return std::make_shared<rxmesh::RXMeshStatic>(vertex_list,
+                                                  face_list,
+                                                  patcher_file,
+                                                  patch_size,
+                                                  capacity_factor,
+                                                  patch_alloc_factor,
+                                                  lp_hashtable_load_factor);
+}
+
 template <typename HandleT>
 py::array_t<uint64_t> handles(rxmesh::RXMeshStatic& mesh)
 {
@@ -201,6 +246,16 @@ void register_mesh(py::module_& m)
              py::arg("patch_alloc_factor")       = 1.0f,
              py::arg("lp_hashtable_load_factor") = 0.8f,
              "Load a static triangle mesh from an OBJ file.")
+        .def(py::init(&rxmesh_static_from_arrays),
+             py::arg("vertices"),
+             py::arg("faces"),
+             py::arg("patcher_file")             = "",
+             py::arg("patch_size")               = 512,
+             py::arg("capacity_factor")          = 1.0f,
+             py::arg("patch_alloc_factor")       = 1.0f,
+             py::arg("lp_hashtable_load_factor") = 0.8f,
+             "Create a static triangle mesh from (n, 3) vertices and (m, 3) "
+             "face arrays.")
         .def_static("from_files",
                     &rxmesh_static_from_files,
                     py::arg("file_paths"),
