@@ -4,6 +4,16 @@ import pytest
 import torch
 
 
+def test_attributes_default_to_soa(mesh) -> None:
+    attributes = (
+        mesh.add_vertex_attribute("default_soa_vertex"),
+        mesh.add_edge_attribute("default_soa_edge"),
+        mesh.add_face_attribute("default_soa_face"),
+    )
+
+    assert all(attribute.layout == "soa" for attribute in attributes)
+
+
 def test_attribute_metadata_allocation_and_numpy_round_trip(mesh) -> None:
     attr = mesh.add_vertex_attribute(
         "py_vertex_vec3",

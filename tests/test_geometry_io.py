@@ -33,8 +33,21 @@ def test_rxmesh_static_from_arrays() -> None:
 
     assert mesh.num_vertices == vertices.shape[0]
     assert mesh.num_faces == faces.shape[0]
+    assert mesh.input_vertex_coordinates().layout == "soa"
     np.testing.assert_allclose(mesh.vertices(order="global"), vertices)
     np.testing.assert_array_equal(mesh.faces(order="global"), faces)
+
+
+def test_rxmesh_static_file_coordinates_default_to_soa(mesh) -> None:
+    assert mesh.input_vertex_coordinates().layout == "soa"
+
+
+def test_rxmesh_static_from_files_coordinates_default_to_soa(
+    mesh_path: Path,
+) -> None:
+    mesh = rx.RXMeshStatic.from_files([str(mesh_path)], patch_size=32)
+
+    assert mesh.input_vertex_coordinates().layout == "soa"
 
 
 def test_io_export_obj(mesh, tmp_path: Path) -> None:

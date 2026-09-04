@@ -160,7 +160,7 @@ else:
     from . import _numpy_interop  # noqa: F401  (side-effect: monkey-patches)
     from . import _scipy_interop  # noqa: F401  (side-effect: monkey-patches)
     from . import _torch_interop  # noqa: F401  (side-effect: monkey-patches)
-    from . import diff  # noqa: F401  (side-effect: installs energy.torch)
+    from . import diff  # noqa: F401  (side-effect: installs energy helpers)
 
     __all__.append("diff")
 

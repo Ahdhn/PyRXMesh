@@ -5,11 +5,29 @@ namespace pyrxmesh_py {
 
 namespace {
 
+std::shared_ptr<rxmesh::RXMeshStatic> rxmesh_static_from_file(
+    const std::string& file_path,
+    const std::string& patcher_file,
+    uint32_t           patch_size,
+    float              capacity_factor,
+    float              patch_alloc_factor,
+    float              lp_hashtable_load_factor)
+{
+    return std::make_shared<rxmesh::RXMeshStatic>(file_path,
+                                                  patcher_file,
+                                                  patch_size,
+                                                  capacity_factor,
+                                                  patch_alloc_factor,
+                                                  lp_hashtable_load_factor,
+                                                  rxmesh::SoA);
+}
+
 std::shared_ptr<rxmesh::RXMeshStatic> rxmesh_static_from_files(
     const std::vector<std::string>& file_paths,
     uint32_t                        patch_size)
 {
-    return std::make_shared<rxmesh::RXMeshStatic>(file_paths, patch_size);
+    return std::make_shared<rxmesh::RXMeshStatic>(
+        file_paths, patch_size, rxmesh::SoA);
 }
 
 std::shared_ptr<rxmesh::RXMeshStatic> rxmesh_static_from_arrays(
@@ -48,13 +66,15 @@ std::shared_ptr<rxmesh::RXMeshStatic> rxmesh_static_from_arrays(
         }
     }
 
-    return std::make_shared<rxmesh::RXMeshStatic>(vertex_list,
-                                                  face_list,
-                                                  patcher_file,
-                                                  patch_size,
-                                                  capacity_factor,
-                                                  patch_alloc_factor,
-                                                  lp_hashtable_load_factor);
+    auto mesh =
+        std::make_shared<rxmesh::RXMeshStatic>(face_list,
+                                               patcher_file,
+                                               patch_size,
+                                               capacity_factor,
+                                               patch_alloc_factor,
+                                               lp_hashtable_load_factor);
+    mesh->add_vertex_coordinates(vertex_list, "", rxmesh::SoA);
+    return mesh;
 }
 
 template <typename HandleT>
@@ -233,12 +253,7 @@ void register_mesh(py::module_& m)
 
     py::class_<RXMeshStatic, std::shared_ptr<RXMeshStatic>>(
         m, "RXMeshStatic", py::dynamic_attr())
-        .def(py::init<const std::string,
-                      const std::string,
-                      const uint32_t,
-                      const float,
-                      const float,
-                      const float>(),
+        .def(py::init(&rxmesh_static_from_file),
              py::arg("file_path"),
              py::arg("patcher_file")             = "",
              py::arg("patch_size")               = 512,
