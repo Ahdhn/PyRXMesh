@@ -25,6 +25,11 @@ classifiers = [
     "Programming Language :: Python :: 3"
 ]
 
+[project.optional-dependencies]
+viz = [
+    "polyscope",
+]
+
 [project.urls]
 RXMesh = "https://github.com/owensgroup/RXMesh"
 Documentation = "https://ahdhn.github.io/RXMeshDocs/"
