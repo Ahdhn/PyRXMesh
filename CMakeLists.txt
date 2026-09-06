@@ -14,7 +14,7 @@ set(PYRXMESH_VERSION "${CMAKE_MATCH_1}")
 
 project(PyRXMesh LANGUAGES C CXX CUDA)
 # Increment when the compiled custom-plugin capsule/API contract changes incompatibly and old plugins will no longer work with the new PyRXMesh version. This is separate from the overall project version, which can be incremented for any change including compatible ones.
-set(PYRXMESH_PLUGIN_ABI_VERSION 2)
+set(PYRXMESH_PLUGIN_ABI_VERSION 3)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
@@ -39,7 +39,6 @@ endif()
 set(PYRXMESH_RXMESH_GIT_REPO "https://github.com/owensgroup/RXMesh.git" CACHE STRING "RXMesh Git repository URL")
 set(PYRXMESH_RXMESH_GIT_TAG "main" CACHE STRING "RXMesh Git tag, branch, or commit to build against")
 set(PYRXMESH_RXMESH_SOURCE_DIR "" CACHE PATH "Optional local RXMesh source checkout. If set, Git fetch is skipped.")
-set(PYRXMESH_USE_POLYSCOPE "ON" CACHE BOOL "Build RXMesh with Polyscope visualization support")
 set(PYRXMESH_BUILD_RXMESH_TESTS "OFF" CACHE BOOL "Build RXMesh tests when building PyRXMesh")
 set(PYRXMESH_BUILD_RXMESH_APPS "OFF" CACHE BOOL "Build RXMesh apps when building PyRXMesh")
 set(PYRXMESH_USE_DOUBLE "OFF" CACHE BOOL "Build RXMesh with double precision coordinate input")
@@ -55,7 +54,7 @@ string(REPLACE ";" "," PYRXMESH_CUDA_ARCHITECTURES_TAG "${PYRXMESH_CUDA_ARCHITEC
 # RXMesh uses these option names internally. Force them before adding RXMesh so PyRXMesh controls the dependency build in both Git and local-source modes.
 set(RX_BUILD_TESTS ${PYRXMESH_BUILD_RXMESH_TESTS} CACHE BOOL "" FORCE)
 set(RX_BUILD_APPS ${PYRXMESH_BUILD_RXMESH_APPS} CACHE BOOL "" FORCE)
-set(RX_USE_POLYSCOPE ${PYRXMESH_USE_POLYSCOPE} CACHE BOOL "" FORCE)
+set(RX_USE_POLYSCOPE OFF CACHE BOOL "" FORCE)
 set(RX_USE_DOUBLE ${PYRXMESH_USE_DOUBLE} CACHE BOOL "" FORCE)
 set(RX_USE_CUDSS ${PYRXMESH_USE_CUDSS} CACHE BOOL "" FORCE)
 set(RX_USE_SUITESPARSE ${PYRXMESH_USE_SUITESPARSE} CACHE BOOL "" FORCE)
@@ -98,7 +97,7 @@ pyrxmesh_normalize_config_field(
 
 # Captures all build and header inputs plugins must match. Runtime import rejects mismatches before any C++/CUDA object crosses the plugin boundary.
 set(PYRXMESH_BUILD_CONFIG_TAG
-    "abi=${PYRXMESH_PLUGIN_ABI_VERSION},pyrxmesh=${PYRXMESH_VERSION},rxmesh_repo=${PYRXMESH_RXMESH_GIT_REPO_TAG},rxmesh_tag=${PYRXMESH_RXMESH_GIT_TAG_TAG},polyscope=${PYRXMESH_USE_POLYSCOPE},double=${PYRXMESH_USE_DOUBLE},cudss=${PYRXMESH_USE_CUDSS},suitesparse=${PYRXMESH_USE_SUITESPARSE},cuda_arch=${PYRXMESH_CUDA_ARCHITECTURES_TAG}"
+    "abi=${PYRXMESH_PLUGIN_ABI_VERSION},pyrxmesh=${PYRXMESH_VERSION},rxmesh_repo=${PYRXMESH_RXMESH_GIT_REPO_TAG},rxmesh_tag=${PYRXMESH_RXMESH_GIT_TAG_TAG},double=${PYRXMESH_USE_DOUBLE},cudss=${PYRXMESH_USE_CUDSS},suitesparse=${PYRXMESH_USE_SUITESPARSE},cuda_arch=${PYRXMESH_CUDA_ARCHITECTURES_TAG}"
 )
 
 set_target_properties(RXMesh PROPERTIES POSITION_INDEPENDENT_CODE ON)

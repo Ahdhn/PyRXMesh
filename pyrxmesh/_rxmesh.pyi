@@ -35,7 +35,7 @@ Location: Final[_LocationNamespace]
 Layout: Final[_LayoutNamespace]
 _JacobianResult: TypeAlias = _JacobianSparseMatrixFloat32 | _JacobianSparseMatrixFloat64
 _HessianResult: TypeAlias = _HessianSparseMatrixFloat32Dim1 | _HessianSparseMatrixFloat32Dim2 | _HessianSparseMatrixFloat32Dim3 | _HessianSparseMatrixFloat32Dim4 | _HessianSparseMatrixFloat32Dim6 | _HessianSparseMatrixFloat64Dim1 | _HessianSparseMatrixFloat64Dim2 | _HessianSparseMatrixFloat64Dim3 | _HessianSparseMatrixFloat64Dim4 | _HessianSparseMatrixFloat64Dim6
-__all__: list[str] = ['Attribute', 'CGSolver', 'CholeskySolver', 'DEdgeHandle', 'DType', 'DenseMatrix', 'EdgeAttributeFloat32', 'EdgeAttributeFloat64', 'EdgeAttributeInt32', 'EdgeAttributeInt8', 'EdgeHandle', 'ElementKind', 'FaceAttributeFloat32', 'FaceAttributeFloat64', 'FaceAttributeInt32', 'FaceAttributeInt8', 'FaceHandle', 'HessianSparseMatrix', 'JacobianSparseMatrix', 'LUSolver', 'Layout', 'Location', 'LogLevel', 'Op', 'PCGSolver', 'QRSolver', 'RXMeshStatic', 'ScalarEnergy', 'SparseMatrix', 'VertexAttributeFloat32', 'VertexAttributeFloat64', 'VertexAttributeInt32', 'VertexAttributeInt8', 'VertexHandle', 'abi_version', 'build_config_tag', 'create_plane', 'cuDSSCholeskySolver', 'cuda_stream_synchronize', 'has_cudss', 'init', 'show']
+__all__: list[str] = ['Attribute', 'CGSolver', 'CholeskySolver', 'DEdgeHandle', 'DType', 'DenseMatrix', 'EdgeAttributeFloat32', 'EdgeAttributeFloat64', 'EdgeAttributeInt32', 'EdgeAttributeInt8', 'EdgeHandle', 'ElementKind', 'FaceAttributeFloat32', 'FaceAttributeFloat64', 'FaceAttributeInt32', 'FaceAttributeInt8', 'FaceHandle', 'HessianSparseMatrix', 'JacobianSparseMatrix', 'LUSolver', 'Layout', 'Location', 'LogLevel', 'Op', 'PCGSolver', 'QRSolver', 'RXMeshStatic', 'ScalarEnergy', 'SparseMatrix', 'VertexAttributeFloat32', 'VertexAttributeFloat64', 'VertexAttributeInt32', 'VertexAttributeInt8', 'VertexHandle', 'abi_version', 'build_config_tag', 'create_plane', 'cuDSSCholeskySolver', 'cuda_stream_synchronize', 'has_cudss', 'init']
 
 class Attribute:
 
@@ -890,12 +890,6 @@ class RXMeshStatic:
         Load multiple OBJ files into one RXMeshStatic.
         """
 
-    @staticmethod
-    def show() -> None:
-        """
-        Open the Polyscope viewer for this mesh.
-        """
-
     @typing.overload
     def __init__(self, file_path: str, patcher_file: str='', patch_size: typing.SupportsInt | typing.SupportsIndex=512, capacity_factor: typing.SupportsFloat | typing.SupportsIndex=1.0, patch_alloc_factor: typing.SupportsFloat | typing.SupportsIndex=1.0, lp_hashtable_load_factor: typing.SupportsFloat | typing.SupportsIndex=0.800000011920929) -> None:
         """
@@ -989,6 +983,9 @@ class RXMeshStatic:
     def edge_handles(self) -> _HandleArray:
         ...
 
+    def edges(self, order: _MeshOrder='linear') -> npt.NDArray[np.uint32]:
+        ...
+
     def export_obj(self, filename: str, coords: Attribute) -> None:
         """
         Export the mesh to an OBJ file using a vertex coordinate attribute.
@@ -1054,6 +1051,9 @@ class RXMeshStatic:
         ...
 
     def patch_size_stats(self) -> tuple[int, int, int]:
+        ...
+
+    def polyscope_edge_permutation(self) -> _IndexArray:
         ...
 
     def remove_attribute(self, name: str) -> None:
@@ -1138,6 +1138,9 @@ class ScalarEnergy:
         ...
 
     def torch(self, x: torch.Tensor, *, copy: _CopyPolicy='auto') -> torch.Tensor:
+        ...
+
+    def value_and_grad(self, x: torch.Tensor, *, out: torch.Tensor, copy: _CopyPolicy='auto', gradient_mask: torch.Tensor | None=None) -> torch.Tensor:
         ...
 
     @property
@@ -1511,9 +1514,4 @@ def cuda_stream_synchronize(stream: _Stream=None) -> None:
 
 def init(device_id: _IntLike=0, log_level: LogLevel=...) -> None:
     ...
-
-def show() -> None:
-    """
-    Open the Polyscope viewer.
-    """
 has_cudss: Final[bool]

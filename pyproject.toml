@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "PyRXMesh"
-version = "0.2.1rc2"
+version = "0.3"
 description = "Python bindings for RXMesh, a CUDA/C++ library for mesh processing on the GPU."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -94,7 +94,6 @@ sdist.exclude = [
 PYRXMESH_RXMESH_GIT_REPO = "https://github.com/owensgroup/RXMesh.git"
 PYRXMESH_RXMESH_GIT_TAG = "main"
 PYRXMESH_RXMESH_SOURCE_DIR = ""
-PYRXMESH_USE_POLYSCOPE = "ON"
 PYRXMESH_BUILD_RXMESH_TESTS = "OFF"
 PYRXMESH_BUILD_RXMESH_APPS = "OFF"
 PYRXMESH_USE_DOUBLE = "OFF"

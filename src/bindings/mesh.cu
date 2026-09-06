@@ -184,6 +184,30 @@ py::array_t<uint32_t> faces(const rxmesh::RXMeshStatic& mesh,
     return out;
 }
 
+py::array_t<uint32_t> edges(const rxmesh::RXMeshStatic& mesh,
+                            const std::string&          order)
+{
+    const bool global_order = use_global_order(order);
+
+    py::array_t<uint32_t> out({static_cast<py::ssize_t>(mesh.get_num_edges()),
+                               static_cast<py::ssize_t>(2)});
+    mesh.create_edge_list(out.mutable_data(), global_order);
+    return out;
+}
+
+py::array polyscope_edge_permutation(
+    const std::shared_ptr<rxmesh::RXMeshStatic>& mesh)
+{
+    const auto& permutation = mesh->get_edge_permutation();
+    py::array   out =
+        py::array_t<uint32_t>({static_cast<py::ssize_t>(permutation.size())},
+                              {static_cast<py::ssize_t>(sizeof(uint32_t))},
+                              permutation.data(),
+                              py::cast(mesh));
+    out.attr("setflags")(py::arg("write") = false);
+    return out;
+}
+
 py::tuple patch_size_stats(rxmesh::RXMeshStatic& mesh)
 {
     uint32_t min_p = 0;
@@ -323,8 +347,6 @@ void register_mesh(py::module_& m)
              &patch_size_stats,
              "Return (min_patch_size, max_patch_size, avg_patch_size).")
         .def(
-            "show", &show_polyscope, "Open the Polyscope viewer for this mesh.")
-        .def(
             "input_vertex_coordinates",
             [](std::shared_ptr<RXMeshStatic> mesh) {
                 auto attr = mesh->get_input_vertex_coordinates();
@@ -343,6 +365,16 @@ void register_mesh(py::module_& m)
              py::arg("order") = "linear",
              "Return faces in RXMesh linear or global order. The selected "
              "order applies to both face rows and vertex IDs.")
+        .def("edges",
+             &edges,
+             py::arg("order") = "linear",
+             "Return edges in RXMesh linear or global order. The selected "
+             "order applies to both edge rows and vertex IDs.")
+        .def("polyscope_edge_permutation",
+             &polyscope_edge_permutation,
+             "Return the read-only zero-copy permutation expected by "
+             "Polyscope's set_edge_permutation(). Keep the mesh alive while "
+             "the view is in use.")
         .def("bounding_box",
              &bounding_box,
              "Return (lower, upper) NumPy arrays for the mesh bounding box.")

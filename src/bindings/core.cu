@@ -71,7 +71,6 @@ void register_module_core(py::module_& m)
         py::arg("log_level") = spdlog::level::info,
         "Initialize RXMesh logging and select a CUDA device.");
 
-    m.def("show", &show_polyscope, "Open the Polyscope viewer.");
     m.def("cuda_stream_synchronize",
           [](py::object stream) {
               cuda_stream_synchronize_arg(std::move(stream));

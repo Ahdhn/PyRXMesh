@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 
+import polyscope as ps
 import pyrxmesh as rx
 
 
@@ -24,7 +25,13 @@ def main() -> None:
     print(f"  edge_manifold={mesh.is_edge_manifold()}")
     print(")")
 
-    rx.show()
+    positions = mesh.input_vertex_coordinates().to_numpy("host")
+    faces = mesh.faces(order="linear")
+
+    ps.init()
+    ps_mesh = ps.register_surface_mesh("RXMesh", positions, faces)
+    ps_mesh.set_edge_permutation(mesh.polyscope_edge_permutation())
+    ps.show()
 
 
 if __name__ == "__main__":

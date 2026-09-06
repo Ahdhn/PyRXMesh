@@ -32,10 +32,6 @@
 
 #include "bindings/dispatch.h"
 
-#if USE_POLYSCOPE
-#include "polyscope/polyscope.h"
-#endif
-
 namespace py = pybind11;
 
 namespace pyrxmesh_py {
@@ -244,23 +240,6 @@ inline const char* op_name(rxmesh::Op op)
         default:
             throw std::invalid_argument("Unknown RXMesh query operation.");
     }
-}
-
-inline void ensure_polyscope_available()
-{
-#if !USE_POLYSCOPE
-    throw std::runtime_error(
-        "RXMesh was built with RX_USE_POLYSCOPE=OFF; visualization is not "
-        "available.");
-#endif
-}
-
-inline void show_polyscope()
-{
-    ensure_polyscope_available();
-#if USE_POLYSCOPE
-    polyscope::show();
-#endif
 }
 
 inline glm::fvec3 sequence_to_fvec3(const py::sequence& values,

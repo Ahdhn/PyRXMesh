@@ -61,7 +61,6 @@ jobs:
           CIBW_BUILD_FRONTEND: "build"
           CIBW_CONFIG_SETTINGS: >-
             cmake.define.CMAKE_CUDA_ARCHITECTURES=${{ env.CUDA_ARCHITECTURES }}
-            cmake.define.PYRXMESH_USE_POLYSCOPE=ON
             cmake.define.PYRXMESH_BUILD_RXMESH_TESTS=OFF
             cmake.define.PYRXMESH_BUILD_RXMESH_APPS=OFF
             cmake.define.PYRXMESH_INSTALL_PLUGIN_SDK=ON              
@@ -79,7 +78,7 @@ jobs:
             dnf install -y dnf-plugins-core wget ca-certificates
             dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
             dnf clean expire-cache
-            dnf install -y cuda-toolkit-12-6 libglvnd-devel libX11-devel libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel
+            dnf install -y cuda-toolkit-12-6
             ln -sfn /usr/local/cuda-12.6 /usr/local/cuda
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >-
             auditwheel repair
@@ -91,15 +90,6 @@ jobs:
             --exclude libcusparse.so.12
             --exclude libnvJitLink.so.12
             --exclude libnvrtc.so.12
-            --exclude libGL.so.1
-            --exclude libGLX.so.0
-            --exclude libOpenGL.so.0
-            --exclude libGLdispatch.so.0
-            --exclude libX11.so.6
-            --exclude libXcursor.so.1
-            --exclude libXi.so.6
-            --exclude libXinerama.so.1
-            --exclude libXrandr.so.2
             -w {dest_dir} {wheel}
 
       - name: Inspect Linux wheels

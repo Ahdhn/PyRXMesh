@@ -41,7 +41,6 @@ from ._rxmesh import (
     cuDSSCholeskySolver as cuDSSCholeskySolver,
     has_cudss as has_cudss,
     init as init,
-    show as show,
 )
 
 __all__: list[str]

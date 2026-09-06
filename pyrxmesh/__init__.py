@@ -101,7 +101,6 @@ try:
         cuDSSCholeskySolver,
         has_cudss,
         init,
-        show,
     )
 except ModuleNotFoundError as exc:
     if exc.name != f"{__name__}._rxmesh":
@@ -151,7 +150,6 @@ else:
         "cuDSSCholeskySolver",
         "has_cudss",
         "init",
-        "show",
     ]
 
     # Attach optional interop methods to the native classes. Each submodule

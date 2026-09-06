@@ -107,7 +107,8 @@ type, variable dimension, and element handle consistent between `Problem` and
 `make_scalar_energy`.
 
 See PyRXMesh's `DIFFERENTIABLE_ENERGY_PLUGINS.md` for the term API, query
-examples, fixed attributes, row order, and gradient validation.
+examples, fixed attributes, row order, gradient validation, and the differences
+between `energy.torch()`, `energy.value_and_grad()`, and `energy.evaluate()`.
 """
 
 

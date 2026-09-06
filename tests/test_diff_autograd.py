@@ -8,12 +8,7 @@ import pytest
 import torch
 
 
-try:
-    import rxmesh_diff_energy
-except ImportError as exc:
-    raise ImportError(
-        "Install examples/diff_energy_plugin before running this test module."
-    ) from exc
+import rxmesh_diff_energy
 
 
 _TETRAHEDRON_OBJ = """\
@@ -345,3 +340,83 @@ def test_forward_without_autograd(tiny_mesh, context):
     assert not loss.requires_grad
     assert loss.item() == pytest.approx(
         _reference(tiny_mesh, values)[0], rel=5e-4)
+
+
+def test_value_and_grad_writes_and_reuses_output(tiny_mesh):
+    values = _positions(tiny_mesh, 0.27)
+    expected_loss, expected_gradient = _reference(tiny_mesh, values)
+    energy = _energy(tiny_mesh)
+    x = _soa_variable(values)
+    gradient = torch.empty_like(x, memory_format=torch.contiguous_format)
+    pointer = gradient.data_ptr()
+
+    loss = energy.value_and_grad(x, out=gradient, copy="never")
+
+    assert gradient.data_ptr() == pointer
+    assert not loss.requires_grad
+    assert loss.item() == pytest.approx(expected_loss, rel=5e-4)
+    _assert_gradient(gradient, expected_gradient)
+
+    second = _positions(tiny_mesh, 1.13)
+    with torch.no_grad():
+        x.copy_(torch.as_tensor(second, device=x.device))
+    second_loss = energy.value_and_grad(
+        x, out=gradient, copy="never"
+    )
+
+    assert gradient.data_ptr() == pointer
+    assert second_loss.item() == pytest.approx(
+        _reference(tiny_mesh, second)[0], rel=5e-4
+    )
+    _assert_gradient(gradient, _reference(tiny_mesh, second)[1])
+
+
+@pytest.mark.parametrize("mask_shape", ["vector", "column"])
+@pytest.mark.parametrize("mask_dtype", [torch.bool, torch.int8])
+def test_value_and_grad_applies_row_mask(tiny_mesh, mask_shape, mask_dtype):
+    values = _positions(tiny_mesh, 0.52)
+    expected_loss, expected_gradient = _reference(tiny_mesh, values)
+    energy = _energy(tiny_mesh)
+    x = _soa_variable(values)
+    gradient = torch.empty_like(x, memory_format=torch.contiguous_format)
+
+    mask = torch.ones(
+        tiny_mesh.num_vertices,
+        dtype=mask_dtype,
+        device=x.device,
+    )
+    mask[::2] = 0
+    argument = mask if mask_shape == "vector" else mask[:, None]
+
+    loss = energy.value_and_grad(
+        x,
+        out=gradient,
+        copy="never",
+        gradient_mask=argument,
+    )
+
+    expected_gradient[::2] = 0
+    assert loss.item() == pytest.approx(expected_loss, rel=5e-4)
+    _assert_gradient(gradient, expected_gradient)
+
+
+def test_value_and_grad_validates_output_and_mask(tiny_mesh):
+    x = _soa_variable(_positions(tiny_mesh))
+    energy = _energy(tiny_mesh)
+    n = tiny_mesh.num_vertices
+
+    soa_output = rx.diff.empty_soa(
+        (n, 3), dtype=x.dtype, device=x.device
+    )
+    with pytest.raises(ValueError, match="row-major contiguous"):
+        energy.value_and_grad(x, out=soa_output, copy="never")
+
+    output = torch.empty((n, 3), dtype=x.dtype, device=x.device)
+    bad_mask = torch.empty((n, 2), dtype=torch.int8, device=x.device)
+    with pytest.raises(ValueError, match="gradient_mask shape"):
+        energy.value_and_grad(
+            x,
+            out=output,
+            copy="never",
+            gradient_mask=bad_mask,
+        )

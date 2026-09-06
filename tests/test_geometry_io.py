@@ -45,7 +45,7 @@ def test_rxmesh_static_file_coordinates_default_to_soa(mesh) -> None:
 def test_rxmesh_static_from_files_coordinates_default_to_soa(
     mesh_path: Path,
 ) -> None:
-    mesh = rx.RXMeshStatic.from_files([str(mesh_path)], patch_size=32)
+    mesh = rx.RXMeshStatic.from_files([str(mesh_path)], patch_size=256)
 
     assert mesh.input_vertex_coordinates().layout == "soa"
 

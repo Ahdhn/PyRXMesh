@@ -431,6 +431,11 @@ class RXMeshStatic:
         self,
         order: _MeshOrder = "linear",
     ) -> npt.NDArray[np.uint32]: ...
+    def edges(
+        self,
+        order: _MeshOrder = "linear",
+    ) -> npt.NDArray[np.uint32]: ...
+    def polyscope_edge_permutation(self) -> _IndexArray: ...
     def bounding_box(
         self,
     ) -> tuple[npt.NDArray[np.float32], npt.NDArray[np.float32]]: ...
@@ -671,6 +676,14 @@ class ScalarEnergy:
         x: torch.Tensor,
         *,
         copy: _CopyPolicy = "auto",
+    ) -> torch.Tensor: ...
+    def value_and_grad(
+        self,
+        x: torch.Tensor,
+        *,
+        out: torch.Tensor,
+        copy: _CopyPolicy = "auto",
+        gradient_mask: torch.Tensor | None = None,
     ) -> torch.Tensor: ...
 
 

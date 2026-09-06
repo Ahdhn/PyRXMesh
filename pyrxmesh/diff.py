@@ -145,9 +145,9 @@ def _validate_energy_input(
 ) -> None:
     torch = _require_torch()
     if not isinstance(x, torch.Tensor) or x.layout != torch.strided:
-        raise TypeError("ScalarEnergy.torch() expects a strided Tensor")
+        raise TypeError("ScalarEnergy input must be a strided Tensor")
     if not x.is_cuda:
-        raise ValueError("ScalarEnergy.torch() requires a CUDA Tensor")
+        raise ValueError("ScalarEnergy input must be a CUDA Tensor")
     expected_shape = (energy.element_count, energy.variable_dim)
     if x.ndim != 2 or tuple(x.shape) != expected_shape:
         raise ValueError(
@@ -195,19 +195,18 @@ def _run_torch_forward(
     x: torch.Tensor,
     copy: str,
     with_gradient: bool,
+    gradient_out: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     torch = _require_torch()
     stream = torch.cuda.current_stream()
     effective_input = _prepare_torch_input(x, copy)
-    gradient: torch.Tensor | None = (
-        torch.empty(
+    gradient: torch.Tensor | None = gradient_out if with_gradient else None
+    if with_gradient and gradient is None:
+        gradient = torch.empty(
             (energy.element_count, energy.variable_dim),
             dtype=x.dtype,
             device=x.device,
         )
-        if with_gradient
-        else None
-    )
     term_losses: torch.Tensor = torch.empty(
         energy.term_count, dtype=x.dtype, device=x.device
     )
@@ -216,6 +215,8 @@ def _run_torch_forward(
     # created and consumed on this stream, so their normal Torch ownership is
     # sufficient.
     effective_input.record_stream(stream)
+    if gradient is not None:
+        gradient.record_stream(stream)
     energy._torch_forward(
         effective_input.data_ptr(),
         gradient.data_ptr() if gradient is not None else 0,
@@ -223,6 +224,51 @@ def _run_torch_forward(
         _stream_token(stream),
     )
     return term_losses.sum(), gradient
+
+
+def _validate_gradient_output(
+    energy: ScalarEnergy,
+    x: torch.Tensor,
+    out: torch.Tensor,
+) -> None:
+    torch = _require_torch()
+    if not isinstance(out, torch.Tensor) or out.layout != torch.strided:
+        raise TypeError("out must be a strided torch.Tensor")
+    expected_shape = (energy.element_count, energy.variable_dim)
+    if tuple(out.shape) != expected_shape:
+        raise ValueError(
+            f"out shape must be {expected_shape}; got {tuple(out.shape)}"
+        )
+    if out.dtype != x.dtype:
+        raise TypeError(f"out dtype must be {x.dtype}; got {out.dtype}")
+    if out.device != x.device:
+        raise ValueError(f"out must be on {x.device}; got {out.device}")
+    if not out.is_contiguous():
+        raise ValueError("out must be row-major contiguous")
+    if out.requires_grad:
+        raise ValueError("out must not require gradients")
+
+
+def _gradient_mask_view(
+    mask: torch.Tensor,
+    rows: int,
+    device: torch.device,
+) -> torch.Tensor:
+    torch = _require_torch()
+    if not isinstance(mask, torch.Tensor) or mask.layout != torch.strided:
+        raise TypeError("gradient_mask must be a strided torch.Tensor")
+    if mask.device != device:
+        raise ValueError(
+            f"gradient_mask must be on {device}; got {mask.device}"
+        )
+    if tuple(mask.shape) == (rows,):
+        return mask[:, None]
+    if tuple(mask.shape) == (rows, 1):
+        return mask
+    raise ValueError(
+        f"gradient_mask shape must be ({rows},) or ({rows}, 1); "
+        f"got {tuple(mask.shape)}"
+    )
 
 
 def _torch_function() -> Any:
@@ -272,6 +318,9 @@ def _energy_torch(
 
     copy='auto' borrows an RXMesh-SoA input and stages any other accepted
     layout. copy='never' requires the zero-copy SoA layout.
+
+    Use value_and_grad() instead when a numerical optimizer only needs a
+    caller-owned, reusable gradient and no autograd node.
     """
 
     torch = _require_torch()
@@ -282,7 +331,54 @@ def _energy_torch(
     return _run_torch_forward(self, x, copy, False)[0]
 
 
+def _energy_value_and_grad(
+    self: ScalarEnergy,
+    x: torch.Tensor,
+    *,
+    out: torch.Tensor,
+    copy: str = "auto",
+    gradient_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Evaluate the loss and write its gradient directly into out.
+
+    This method bypasses autograd and is intended for optimizers that accept
+    a manually supplied gradient. out must be a row-major contiguous CUDA
+    Tensor. A zero/one gradient_mask may have shape (n,) or (n, 1);
+    it is multiplied into out in place on the current Torch stream.
+
+    The returned value is a scalar CUDA Tensor. Every call overwrites out;
+    allocate it once and reuse it across optimizer evaluations.
+    """
+
+    torch = _require_torch()
+    _validate_energy_input(self, x, copy)
+    _validate_gradient_output(self, x, out)
+    mask = (
+        _gradient_mask_view(
+            gradient_mask,
+            self.element_count,
+            x.device,
+        )
+        if gradient_mask is not None
+        else None
+    )
+
+    loss, gradient = _run_torch_forward(
+        self,
+        x,
+        copy,
+        True,
+        gradient_out=out,
+    )
+    assert gradient is out
+    if mask is not None:
+        with torch.no_grad():
+            out.mul_(mask)
+    return loss
+
+
 ScalarEnergy.torch = _energy_torch  # type: ignore[method-assign]
+ScalarEnergy.value_and_grad = _energy_value_and_grad  # type: ignore[method-assign]
 
 
 __all__ = [
