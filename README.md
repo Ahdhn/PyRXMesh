@@ -25,7 +25,7 @@ Visualization is optional and it depends on [Polyscope](https://polyscope.run/py
 python -m pip install "PyRXMesh[viz]"
 ```
 
-For a source build, see [DEVELOPING.md](DEVELOPING.md).
+For a source build, see [docs/DEVELOPING.md](docs/DEVELOPING.md).
 
 ## Create a mesh
 
@@ -112,5 +112,5 @@ PyRXMesh exposes dense matrices, CSR sparse matrices, mesh-derived sparsity patt
 
 - [Writing Differentiable Energy Plugins](DIFFERENTIABLE_ENERGY_PLUGINS.md)
 - [Writing Custom CUDA Plugins](CUSTOM_CUDA_PLUGINS.md)
-- [Developing PyRXMesh](DEVELOPING.md)
+- [Developing PyRXMesh](docs/DEVELOPING.md)
 - [RXMesh CUDA/C++ documentation](https://ahdhn.github.io/RXMeshDocs/)
