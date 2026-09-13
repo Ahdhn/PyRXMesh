@@ -1,145 +1,116 @@
-# PyRXMesh
+# PyRXMesh [![Build wheels](https://github.com/Ahdhn/PyRXMesh/actions/workflows/wheels.yml/badge.svg)](https://github.com/Ahdhn/PyRXMesh/actions/workflows/wheels.yml) [![PyPI](https://img.shields.io/pypi/v/pyrxmesh.svg)](https://pypi.org/project/pyrxmesh/)
 
-Python bindings for [RXMesh](https://github.com/owensgroup/RXMesh), a CUDA/C++ library for GPU mesh processing.
+PyRXMesh brings [RXMesh](https://github.com/owensgroup/RXMesh) GPU mesh processing to Python. PyRXMesh allows using Python and PyTorch to organize an application, while RXMesh accelerates the mesh processing and automatic differentiation on the GPU.
 
-PyRXMesh allows you to keep mesh workflows in Python while using RXMesh data structures and GPU kernels underneath. It supports exchanging arrays and attributes with NumPy and PyTorch, building sparse matrices, and solving linear systems. We use a Python plugin to allow CUDA kernels to be written, compiled, and used directly in Python. Check out [CUSTOM_CUDA_PLUGINS.md](CUSTOM_CUDA_PLUGINS.md) for more details.
+PyRXMesh provides:
 
+- triangle meshes built from OBJ files or NumPy arrays
+- vertex, edge, and face attributes on the host and GPU
+- NumPy, SciPy, and PyTorch interoperability
+- dense and sparse matrices and linear solvers
+- small compiled plugins for custom RXMesh CUDA operations
+- differentiable scalar energies that can be interop with PyTorch autograd.
 
-## Installation
-
-Install PyRXMesh with:
+## Install
 
 ```bash
 python -m pip install PyRXMesh
 ```
 
-PyRXMesh is a CUDA package. You need an NVIDIA driver compatible with the CUDA version used by the wheel. For source builds and development setup, see [DEVELOPING.md](DEVELOPING.md).
+PyRXMesh needs an NVIDIA GPU and a driver compatible with the CUDA version in the wheel. PyTorch and SciPy are optional. Install SciPy normally, and choose the CUDA-enabled PyTorch build for your system from the [PyTorch installation page](https://pytorch.org/get-started/locally/).
 
-## Simple Example
-
-```python
-import pyrxmesh as rx
-
-#Use GPU 0 
-rx.init(0) 
-
-mesh = rx.RXMeshStatic("mesh.obj")
-print(mesh.num_vertices, mesh.num_edges, mesh.num_faces)
-
-rx.show()
-```
-
-The repository includes a small viewer example:
+Visualization is optional and it depends on [Polyscope](https://polyscope.run/py/):
 
 ```bash
-python examples/load_and_show.py --input mesh.obj
+python -m pip install "PyRXMesh[viz]"
 ```
 
-## Mesh Attributes
+For a source build, see [DEVELOPING.md](DEVELOPING.md).
 
-Attributes are data attached to vertices, edges, or faces
+## Create a mesh
+
+Initialize RXMesh once, then load a mesh or build one from arrays:
 
 ```python
 import pyrxmesh as rx
 
-mesh = rx.RXMeshStatic("mesh.obj")
+rx.init(0) #0: GPU id
 
+vertices, faces = rx.create_plane(32, 32, dx=0.05)
+mesh = rx.RXMeshStatic(vertices, faces)
+
+print(mesh.num_vertices, mesh.num_edges, mesh.num_faces)
+
+velocity = mesh.add_vertex_attribute("velocity", dtype="float32", dim=3)
+velocity.reset(0, "device")
+```
+
+`RXMeshStatic("mesh.obj")` loads an OBJ file. Mesh and attribute arrays use RXMesh linear order by default and maps are available when an application needs input/global order.
+
+See [examples/load_and_show.py](examples/load_and_show.py) for mesh inspection and Polyscope visualization, and the tests examples on [mesh construction and export](tests/test_geometry_io.py) and [attributes handling](tests/test_attributes.py).
+
+## Automatic differentiation and PyTorch interop
+
+A *differentiable plugin* defines one or more scalar energy terms as RXMesh CUDA lambdas. We provide a starter plugin/python module  which creates an independent project with boilerplate code (`pyproject.toml`, `CMakeLists.txt`, etc) needed to compile the CUDA lambda function and build their python bindings:
+
+```bash
+python -m pyrxmesh.diff_plugin my_energy
+```
+
+The user writes their energy terms in `.cu` file. Once built, PyRXMesh evaluates its value and gradient on the GPU and exposes the result to PyTorch:
+
+```python
+import torch
+import my_energy
+
+energy = my_energy.make_energy(mesh, {"weight": 0.5})
+x = torch.as_tensor(
+    mesh.vertices(), dtype=torch.float32, device="cuda"
+).requires_grad_()
+
+loss = energy.torch(x)
+loss.backward()
+```
+
+The gradient flows through whatever PyTorch computation produced `x`. For an optimizer that accepts a value and gradient directly, use `energy.value_and_grad()` instead of creating an autograd node.
+
+The starter contains the CUDA term, Python package, build files, and run script. See [Writing Differentiable Energy Plugins](DIFFERENTIABLE_ENERGY_PLUGINS.md) for the complete workflow, including query selection, fixed attributes, row order, and zero-copy input.
+
+## Exchange data with Python
+
+Attributes are attached to vertices, edges, or faces. They use SoA layout by default and may have host storage, device storage, or both.
+
+```python
 coords = mesh.input_vertex_coordinates()
-velocity = mesh.add_vertex_attribute("velocity", dtype="float32",
-                                     dim=3, location=rx.Location.ALL)
 
-velocity.reset(0.0, rx.Location.DEVICE)
-
-host_coords = coords.to_numpy_copy(source=rx.Location.HOST)
-print(host_coords.shape)
+host_view = coords.to_numpy("host") #Zero-copy numpy view
+device_tensor = coords.to_torch("device") #Zero-copy pytorch view 
+owned_array = coords.to_numpy_copy(source="host") #deep copy 
 ```
 
-## NumPy And Torch Interop
+Unsuffixed `to_*` methods return a zero-copy view when supported. Methods ending in `_copy` return independent storage. Host and device allocations are separate; use `attribute.move(source, target)` when one side must receive changes from the other.
 
-Unsuffixed `to_*` methods return zero-copy views when possible. Methods ending
-in `_copy` make an explicit copy.
+Mesh ordering maps, face arrays, and the Polyscope edge permutation are available directly from `RXMeshStatic`. See [tests/test_core_mesh.py](tests/test_core_mesh.py) and [tests/test_attributes.py](tests/test_attributes.py) for the supported operations.
 
-```python
-import pyrxmesh as rx
+## Add custom CUDA operations
 
-mesh = rx.RXMeshStatic("mesh.obj")
-attr = mesh.add_vertex_attribute("temperature", dtype="float32",
-                                 dim=1, location=rx.Location.ALL)
+When an operation cannot be expressed efficiently from Python, generate a small plugin and write only the RXMesh device lambda:
 
-attr.reset(1.0, rx.Location.ALL)
-
-view = attr.to_numpy(rx.Location.HOST)
-view[0, 0] = 42.0
-
-owned = attr.to_numpy_copy(source=rx.Location.HOST)
-print(owned[0, 0])
+```bash
+python -m pyrxmesh.plugin my_kernels
 ```
 
-Torch views use DLPack:
+The generated package builds against the PyRXMesh installation in the active environment. See [Writing Custom CUDA Plugins](CUSTOM_CUDA_PLUGINS.md) and [examples/custom_kernel_plugin](examples/custom_kernel_plugin/).
 
-```python
-tensor = attr.to_torch(rx.Location.DEVICE)
-tensor += 2.0
-```
+## Matrices and solvers
 
-## Dense And Sparse Matrices
+PyRXMesh exposes dense matrices, CSR sparse matrices, mesh-derived sparsity patterns, iterative solvers, and optional direct solvers. Dtypes, storage locations, matrix order, and mesh query patterns use short string arguments where they apply.
 
-PyRXMesh exposes RXMesh dense matrices and CSR sparse matrices.
-
-```python
-import numpy as np
-import pyrxmesh as rx
-
-matrix = rx.DenseMatrix(4, 3, dtype="float32", location=rx.Location.ALL)
-values = np.arange(12, dtype=np.float32).reshape(4, 3)
-
-matrix.from_numpy_copy(values, target=rx.Location.ALL)
-print(matrix.norm2())
-```
-
-Sparse matrices are CSR-only:
-
-```python
-mesh = rx.RXMeshStatic("mesh.obj")
-laplace_like = mesh.sparse_matrix(rx.Op.VV, dtype="float32")
-
-row_ptr, col_idx, values = laplace_like.to_numpy_copy()
-print(laplace_like.shape, laplace_like.nnz)
-```
-
-You can multiply sparse matrices by dense vectors:
-
-```python
-x = np.ones((laplace_like.cols, 1), dtype=np.float32)
-y = laplace_like.multiply_vector(x)
-print(y.to_numpy_copy(source=rx.Location.HOST))
-```
-
-## Solvers
-
-RXMesh solver bindings work with `SparseMatrix` and `DenseMatrix` objects:
-
-```python
-import numpy as np
-import pyrxmesh as rx
-
-row_ptr = np.array([0, 2, 5, 7], dtype=np.int32)
-col_idx = np.array([0, 1, 0, 1, 2, 1, 2], dtype=np.int32)
-values = np.array([4, 1, 1, 3, 1, 1, 2], dtype=np.float32)
-
-A = rx.SparseMatrix.from_numpy_copy(row_ptr, col_idx, values,
-                                    shape=(3, 3), dtype="float32")
-
-b = rx.DenseMatrix(3, 1, dtype="float32", location=rx.Location.ALL)
-b.from_numpy_copy(np.array([[1], [2], [3]], dtype=np.float32))
-
-solver = rx.CGSolver(A, unknown_dim=1)
-x = solver.solve(b)
-
-print(x.to_numpy_copy(source=rx.Location.HOST))
-```
+<!--Working examples are collected in the tests for [dense matrices](tests/test_dense_matrix.py), [sparse matrices](tests/test_sparse_matrix.py), and [solvers](tests/test_solvers.py).-->
 
 ## Documentation
-- [RXMeshDocs](https://ahdhn.github.io/RXMeshDocs/): RXMesh CUDA/C++ documentation website 
-- [DEVELOPING.md](DEVELOPING.md): build PyRXMesh from source and work against RXMesh forks, tags, or local checkouts.
-- [CUSTOM_CUDA_PLUGINS.md](CUSTOM_CUDA_PLUGINS.md): write small compiled CUDA plugins that operate on PyRXMesh meshes and attributes.
+
+- [Writing Differentiable Energy Plugins](DIFFERENTIABLE_ENERGY_PLUGINS.md)
+- [Writing Custom CUDA Plugins](CUSTOM_CUDA_PLUGINS.md)
+- [Developing PyRXMesh](DEVELOPING.md)
+- [RXMesh CUDA/C++ documentation](https://ahdhn.github.io/RXMeshDocs/)
