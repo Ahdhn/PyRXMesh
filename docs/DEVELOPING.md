@@ -1,6 +1,6 @@
 # Developing PyRXMesh
 
-This page for contributors who build PyRXMesh, change its bindings, or work against an RXMesh branch or local checkout. If you only want to use PyRXMesh, start with [README.md](README.md).
+This page for contributors who build PyRXMesh, change its bindings, or work against an RXMesh branch or local checkout. If you only want to use PyRXMesh, start with [README.md](../README.md).
 
 ## Quick Start
 
@@ -19,7 +19,7 @@ python -m pip install -v --no-build-isolation --force-reinstall --no-deps exampl
 python -m pytest
 ```
 
-See [Building and Testing](docs/development/BUILDING_AND_TESTING.md) for platform requirements, CMake options, tests, and build troubleshooting.
+See [Building and Testing](BUILDING_AND_TESTING.md) for platform requirements, CMake options, tests, and build troubleshooting.
 
 ## Work Against a Local RXMesh Checkout
 
@@ -48,7 +48,7 @@ python -m pip install -v --no-build-isolation . -Ccmake.define.PYRXMESH_RXMESH_S
 
 ## Developer References
 
-- [Building and Testing](docs/development/BUILDING_AND_TESTING.md)
-- [Plugin Internals](docs/development/PLUGIN_SDK.md)
-- [Autodiff Internals](docs/development/AUTODIFF_INTERNALS.md)
-- [Releasing PyRXMesh](docs/development/RELEASING.md), including the separate package version and plugin ABI policies
+- [Building and Testing](BUILDING_AND_TESTING.md)
+- [Plugin Internals](PLUGIN_SDK.md)
+- [Autodiff Internals](AUTODIFF_INTERNALS.md)
+- [Releasing PyRXMesh](RELEASING.md), including the separate package version and plugin ABI policies

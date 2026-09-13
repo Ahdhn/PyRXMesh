@@ -100,7 +100,7 @@ When an operation cannot be expressed efficiently from Python, generate a small 
 python -m pyrxmesh.plugin my_kernels
 ```
 
-The generated package builds against the PyRXMesh installation in the active environment. See [Writing Custom CUDA Plugins](CUSTOM_CUDA_PLUGINS.md) and [examples/custom_kernel_plugin](examples/custom_kernel_plugin/).
+The generated package builds against the PyRXMesh installation in the active environment. See [Writing Custom CUDA Plugins](docs/CUSTOM_CUDA_PLUGINS.md) and [examples/custom_kernel_plugin](examples/custom_kernel_plugin/).
 
 ## Matrices and solvers
 
@@ -111,6 +111,6 @@ PyRXMesh exposes dense matrices, CSR sparse matrices, mesh-derived sparsity patt
 ## Documentation
 
 - [Writing Differentiable Energy Plugins](DIFFERENTIABLE_ENERGY_PLUGINS.md)
-- [Writing Custom CUDA Plugins](CUSTOM_CUDA_PLUGINS.md)
+- [Writing Custom CUDA Plugins](docs/CUSTOM_CUDA_PLUGINS.md)
 - [Developing PyRXMesh](docs/DEVELOPING.md)
 - [RXMesh CUDA/C++ documentation](https://ahdhn.github.io/RXMeshDocs/)
