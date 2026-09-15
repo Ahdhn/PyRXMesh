@@ -110,7 +110,7 @@ PyRXMesh exposes dense matrices, CSR sparse matrices, mesh-derived sparsity patt
 
 ## Documentation
 
-- [Writing Differentiable Energy Plugins](DIFFERENTIABLE_ENERGY_PLUGINS.md)
+- [Writing Differentiable Energy Plugins](docs/DIFFERENTIABLE_ENERGY_PLUGINS.md)
 - [Writing Custom CUDA Plugins](docs/CUSTOM_CUDA_PLUGINS.md)
 - [Developing PyRXMesh](docs/DEVELOPING.md)
 - [RXMesh CUDA/C++ documentation](https://ahdhn.github.io/RXMeshDocs/)
