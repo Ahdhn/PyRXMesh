@@ -1131,10 +1131,16 @@ class ScalarEnergy:
     def _torch_forward(self, input_ptr: _IntLike, gradient_ptr: _IntLike, term_losses_ptr: _IntLike, stream: _Stream) -> None:
         ...
 
-    def evaluate(self, opt_var: Attribute, stream: _Stream=None) -> float:
+    def evaluate(self, opt_var: Attribute, stream: _Stream=None, *, derivatives: Literal[0, 1, 2]=1) -> float:
+        ...
+
+    def evaluate_hessian(self, opt_var: Attribute, stream: _Stream=None) -> _HessianResult:
         ...
 
     def gradient_snapshot(self, stream: _Stream=None) -> DenseMatrix:
+        ...
+
+    def hessian_snapshot(self, stream: _Stream=None) -> _HessianResult:
         ...
 
     def torch(self, x: torch.Tensor, *, copy: _CopyPolicy='auto') -> torch.Tensor:
@@ -1164,11 +1170,31 @@ class ScalarEnergy:
         ...
 
     @property
+    def has_gradient(self) -> bool:
+        ...
+
+    @property
+    def has_hessian(self) -> bool:
+        ...
+
+    @property
+    def hessian_enabled(self) -> bool:
+        ...
+
+    @property
+    def hessian_view(self) -> _HessianResult:
+        ...
+
+    @property
     def loss(self) -> float:
         ...
 
     @property
     def mesh(self) -> RXMeshStatic:
+        ...
+
+    @property
+    def projected_hessian(self) -> bool:
         ...
 
     @property

@@ -56,6 +56,21 @@ struct PyHessianSparseMatrix : PySparseMatrixT<T>
         this->released   = false;
     }
 
+    // The aliasing shared_ptr retains the energy that owns this matrix.
+    // Neither this wrapper's release() nor destruction frees its storage.
+    PyHessianSparseMatrix(std::shared_ptr<rxmesh::RXMeshStatic> mesh,
+                          std::shared_ptr<HessT> borrowed_hessian)
+        : hessian(std::move(borrowed_hessian))
+    {
+        this->matrix =
+            std::static_pointer_cast<rxmesh::SparseMatrix<T>>(hessian);
+        this->mesh_owner    = std::move(mesh);
+        this->op            = rxmesh::Op::VV;
+        this->allocated     = rxmesh::DEVICE;
+        this->released      = false;
+        this->external_view = true;
+    }
+
     int variable_dim() const
     {
         return K;

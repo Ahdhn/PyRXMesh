@@ -14,7 +14,7 @@ set(PYRXMESH_VERSION "${CMAKE_MATCH_1}")
 
 project(PyRXMesh LANGUAGES C CXX CUDA)
 # Increment when the compiled custom-plugin capsule/API contract changes incompatibly and old plugins will no longer work with the new PyRXMesh version. This is separate from the overall project version, which can be incremented for any change including compatible ones.
-set(PYRXMESH_PLUGIN_ABI_VERSION 3)
+set(PYRXMESH_PLUGIN_ABI_VERSION 4)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)

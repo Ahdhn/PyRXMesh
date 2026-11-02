@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import runpy
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,12 @@ import torch
 
 
 import rxmesh_diff_energy
+
+
+def test_hessian_example(mesh):
+    example = (Path(__file__).resolve().parents[1] / "examples" /
+               "diff_energy_plugin" / "check_hessian.py")
+    runpy.run_path(str(example))["check_hessian"](mesh)
 
 
 _TETRAHEDRON_OBJ = """\

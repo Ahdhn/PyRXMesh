@@ -17,16 +17,14 @@ def _source(module: str) -> str:
 namespace py = pybind11;
 using namespace rxmesh;
 
-using Problem =
-    pyrxmesh::diff::ScalarGradientProblem<float, 3, VertexHandle>;
-
+template <typename Problem>
 void add_terms(Problem& problem, py::dict params)
 {{
     const float weight =
         params.contains("weight") ? params["weight"].cast<float>() : 1.0f;
 
     // Replace or extend this edge-quadratic example.
-    problem.add_term<Op::EV>(
+    problem.template add_term<Op::EV>(
         [weight] __device__(const auto& eh,
                             const auto& iter,
                             auto&       x) {{
@@ -39,18 +37,42 @@ void add_terms(Problem& problem, py::dict params)
         }});
 }}
 
+template <bool WithHessian, bool ProjectHessian = false>
+std::shared_ptr<pyrxmesh::diff::ScalarEnergyBase> make_energy(
+    py::object mesh, py::dict params)
+{{
+    using Problem = pyrxmesh::diff::ScalarGradientProblem<
+        float, 3, VertexHandle, WithHessian, ProjectHessian>;
+    return pyrxmesh::diff::make_scalar_energy<
+        float, 3, VertexHandle, WithHessian, ProjectHessian>(
+            std::move(mesh), std::move(params), add_terms<Problem>);
+}}
+
 PYBIND11_MODULE(_{module}, m)
 {{
     pyrxmesh::require_compatible_runtime(m);
     m.def(
         "make_energy",
-        [](py::object mesh, py::dict params) {{
-            return pyrxmesh::diff::make_scalar_energy<
-                float, 3, VertexHandle>(
-                    mesh, std::move(params), add_terms);
+        [](py::object mesh, py::dict params,
+           bool with_hessian, bool projected_hessian) {{
+            if (projected_hessian && !with_hessian) {{
+                throw py::value_error(
+                    "projected_hessian=True requires with_hessian=True.");
+            }}
+            if (projected_hessian) {{
+                return make_energy<true, true>(
+                    std::move(mesh), std::move(params));
+            }}
+            if (with_hessian) {{
+                return make_energy<true>(std::move(mesh), std::move(params));
+            }}
+            return make_energy<false>(std::move(mesh), std::move(params));
         }},
         py::arg("mesh"),
-        py::arg("params") = py::dict());
+        py::arg("params") = py::dict(),
+        py::kw_only(),
+        py::arg("with_hessian") = false,
+        py::arg("projected_hessian") = false);
 }}
 """
 
@@ -104,7 +126,11 @@ python run_energy.py path/to/mesh.obj
 
 Add or replace `problem.add_term` calls in the CUDA source. Keep the scalar
 type, variable dimension, and element handle consistent between `Problem` and
-`make_scalar_energy`.
+`make_scalar_energy`. Construct with `with_hessian=True` to enable assembled
+Hessians, and `projected_hessian=True` to use RXMesh's local Hessian projection.
+`energy.evaluate(attribute, derivatives=0/1/2)` selects value only, value and
+gradient, or value, gradient, and Hessian. `energy.hessian_snapshot()` returns
+an owned matrix in RXMesh linear vertex order.
 
 See PyRXMesh's `DIFFERENTIABLE_ENERGY_PLUGINS.md` for the term API, query
 examples, fixed attributes, row order, gradient validation, and the differences

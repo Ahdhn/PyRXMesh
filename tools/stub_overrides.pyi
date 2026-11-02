@@ -662,7 +662,15 @@ class ScalarEnergy:
         self,
         opt_var: Attribute,
         stream: _Stream = None,
+        *,
+        derivatives: Literal[0, 1, 2] = 1,
     ) -> float: ...
+    def evaluate_hessian(
+        self, opt_var: Attribute, stream: _Stream = None,
+    ) -> _HessianResult: ...
+    def hessian_snapshot(self, stream: _Stream = None) -> _HessianResult: ...
+    @property
+    def hessian_view(self) -> _HessianResult: ...
     def _torch_forward(
         self,
         input_ptr: _IntLike,

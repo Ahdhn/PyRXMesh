@@ -191,6 +191,7 @@ struct PySparseMatrixT : PySparseMatrix
 
     std::shared_ptr<SpMatT>             matrix;
     std::shared_ptr<OwnedCsrBuffers<T>> owned_buffers;
+    bool                               external_view = false;
 
     PySparseMatrixT()
     {
@@ -261,7 +262,9 @@ struct PySparseMatrixT : PySparseMatrix
     void release() override
     {
         if (!released && matrix) {
-            matrix->release();
+            if (!external_view) {
+                matrix->release();
+            }
             released  = true;
             allocated = rxmesh::LOCATION_NONE;
         }
