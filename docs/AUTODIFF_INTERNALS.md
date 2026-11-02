@@ -7,10 +7,10 @@ This document describes the implementation and ownership rules behind PyRXMesh s
 A compiled plugin constructs
 
 ```cpp
-pyrxmesh::diff::ScalarGradientProblem<T, VariableDim, HandleT>
+pyrxmesh::diff::ScalarGradientProblem<T, VariableDim, HandleT, WithHessian, ProjectHessian>
 ```
 
-and registers RXMesh scalar terms. The object derives from the type-erased `ScalarEnergyBase`, which is exposed to Python as `ScalarEnergy`.
+and registers RXMesh scalar terms. Both boolean template parameters default to false. The object derives from the type-erased `ScalarEnergyBase`, which is exposed to Python as `ScalarEnergy`. Hessian-enabled specializations instantiate second-order active scalars and native VV Hessian storage; the passive and gradient-only kernels are also available.
 
 The layers are:
 
@@ -95,11 +95,11 @@ RXMesh computation uses linear element order. `to_linear_soa` gathers global row
 
 ## Low-level Attribute path
 
-`energy.evaluate(attribute)` exists for native debugging and Attribute-based workflows. It:
+`energy.evaluate(attribute, derivatives=1)` exists for Attribute-based workflows. It:
 
 1. verifies that the Attribute belongs to the same mesh and matches the energy contract;
-2. lazily allocates the problem's reusable device gradient;
-3. evaluates the terms and gradient; and
+2. lazily allocates the reusable device gradient when `derivatives >= 1`;
+3. runs passive terms for order 0, gradient-only terms for order 1, or full active terms for order 2; and
 4. reduces the loss to a host scalar, synchronizing the call.
 
 `gradient_view` wraps the internal gradient without copying it and retains the energy as its external owner. The view is read-only through the PyRXMesh matrix wrapper, but its contents are overwritten by the next successful low-level evaluation. A Tensor already exported from the view cannot be made generation-aware.
@@ -107,6 +107,20 @@ RXMesh computation uses linear element order. `to_linear_soa` gathers global row
 `gradient_snapshot()` allocates an owned row-major device matrix, copies the current internal gradient into it, and synchronizes the selected stream before returning. It is the stable low-level result at the cost of a device-to-device copy.
 
 The Torch path never saves this reusable internal gradient in an autograd graph.
+
+## Assembled Hessians
+
+`WithHessian=true` enables the second-order path for vertex variables and fixed `V`/`EV`/`FV` stencils. `ProjectHessian` is forwarded to RXMesh's `add_term` template. Projection changes local Hessians before assembly, leaving values and gradients unchanged.
+
+After an Attribute evaluation, `has_evaluated`, `has_gradient`, and `has_hessian` record which results are available. Value-only evaluation invalidates both derivative accessors; first-order evaluation invalidates Hessian access. Torch evaluations continue using their own output buffers and do not publish new low-level result state.
+
+`hessian_view` wraps the internal `HessianSparseMatrix<T,k>` without allocating or copying CSR buffers. Its aliasing shared pointer retains the energy, and existing device DLPack/Torch exports share the row pointers, column indices, and values. The view is mutable: edits affect the energy's Hessian, and subsequent second-order evaluations overwrite its values. Attribute evaluation is already synchronous, so acquiring the view adds no synchronization. Access requires an available second-order result.
+
+The sparse wrapper marks this matrix as an external view, so `release()` and wrapper destruction do not free the energy's storage. Exported tensors retain the wrapper and therefore the energy even after the original Python references are deleted. Already exported views remain aliases; obtaining a new view after a lower-order evaluation is rejected. This API targets device use and does not maintain host coherence after later device writes.
+
+`hessian_snapshot()` remains the independent-copy option. It constructs a `PyHessianSparseMatrix<T,k>` with the identical fixed VV pattern and copies device values to both its host and device allocations, synchronizing the selected stream. `evaluate_hessian(attribute)` combines second-order evaluation with that snapshot. RXMesh's `copy_from` copies values only, so this reconstruction is restricted to fixed stencils without expanded/contact sparsity.
+
+Hessian DOFs use `k * linear_vertex_id + component`, independent of input SoA storage. Native assembly handles query-local indices and mesh handles. Global/input ordering can be applied to both matrix axes by the caller in Python; no new permutation implementation is required in PyRXMesh.
 
 ## Validation
 
