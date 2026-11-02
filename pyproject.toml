@@ -58,7 +58,6 @@ sdist.include = [
     "examples/diff_energy_plugin/README.md",
     "examples/diff_energy_plugin/pyproject.toml",
     "examples/diff_energy_plugin/run_diff_energy.py",
-    "examples/diff_energy_plugin/check_hessian.py",
     "examples/diff_energy_plugin/src/rxmesh_diff_energy.cu",
     "examples/diff_energy_plugin/src/rxmesh_diff_energy/__init__.py",
     "/CMakeLists.txt",
