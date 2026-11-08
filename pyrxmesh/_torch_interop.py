@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from . import Attribute, DenseMatrix, Location, SparseMatrix
+from . import Attribute, DenseMatrix, Location, RXMeshStatic, SparseMatrix
 
 if TYPE_CHECKING:
     import torch
@@ -181,6 +181,39 @@ def _attribute_from_torch_copy(
     return self
 
 
+def _attribute_from_torch_view(self: RXMeshStatic, name: str, values: torch.Tensor,
+                              element: str) -> Attribute:
+    torch = _require_torch()
+    if not isinstance(values, torch.Tensor):
+        raise TypeError("values must be a torch.Tensor")
+    # DLPack rejects grad-tracked tensors; users can explicitly pass detach().
+    return getattr(self, f"add_{element}_attribute_from_dlpack_view")(name, values)
+
+
+def _vertex_attribute_from_torch_view(
+    self: RXMeshStatic, name: str, values: torch.Tensor,
+) -> Attribute:
+    """Share CUDA SoA tensor storage in RXMesh linear vertex order; never copy."""
+    return _attribute_from_torch_view(self, name, values, "vertex")
+
+
+def _edge_attribute_from_torch_view(
+    self: RXMeshStatic, name: str, values: torch.Tensor,
+) -> Attribute:
+    """Share CUDA SoA tensor storage in RXMesh linear edge order; never copy."""
+    return _attribute_from_torch_view(self, name, values, "edge")
+
+
+def _face_attribute_from_torch_view(
+    self: RXMeshStatic, name: str, values: torch.Tensor,
+) -> Attribute:
+    """Share CUDA SoA tensor storage in RXMesh linear face order; never copy."""
+    return _attribute_from_torch_view(self, name, values, "face")
+
+
+RXMeshStatic.add_vertex_attribute_from_torch_view = _vertex_attribute_from_torch_view
+RXMeshStatic.add_edge_attribute_from_torch_view = _edge_attribute_from_torch_view
+RXMeshStatic.add_face_attribute_from_torch_view = _face_attribute_from_torch_view
 DenseMatrix.to_torch = _dense_matrix_to_torch
 DenseMatrix.from_torch_copy = staticmethod(_dense_matrix_from_torch_copy)
 DenseMatrix.from_torch_view = staticmethod(_dense_matrix_from_torch_view)

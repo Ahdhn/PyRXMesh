@@ -1,9 +1,25 @@
 #include "bindings/plugin_launch.h"
+#include "bindings/dlpack_utils.h"
 #include "bindings/py_attribute.h"
 
 namespace pyrxmesh_py {
 
 namespace {
+
+// Native attributes outlive their Python wrappers while registered on the mesh.
+// Keep borrowed buffers with the native mesh, not just with a Python wrapper.
+struct MeshDeleter
+{
+    std::unordered_map<std::string, std::shared_ptr<void>> attribute_owners;
+
+    void operator()(rxmesh::RXMeshStatic* mesh) const { delete mesh; }
+};
+
+template <typename... Args>
+std::shared_ptr<rxmesh::RXMeshStatic> make_mesh(Args&&... args)
+{
+    return {new rxmesh::RXMeshStatic(std::forward<Args>(args)...), MeshDeleter{}};
+}
 
 std::shared_ptr<rxmesh::RXMeshStatic> rxmesh_static_from_file(
     const std::string& file_path,
@@ -13,7 +29,7 @@ std::shared_ptr<rxmesh::RXMeshStatic> rxmesh_static_from_file(
     float              patch_alloc_factor,
     float              lp_hashtable_load_factor)
 {
-    return std::make_shared<rxmesh::RXMeshStatic>(file_path,
+    return make_mesh(file_path,
                                                   patcher_file,
                                                   patch_size,
                                                   capacity_factor,
@@ -26,7 +42,7 @@ std::shared_ptr<rxmesh::RXMeshStatic> rxmesh_static_from_files(
     const std::vector<std::string>& file_paths,
     uint32_t                        patch_size)
 {
-    return std::make_shared<rxmesh::RXMeshStatic>(
+    return make_mesh(
         file_paths, patch_size, rxmesh::SoA);
 }
 
@@ -67,7 +83,7 @@ std::shared_ptr<rxmesh::RXMeshStatic> rxmesh_static_from_arrays(
     }
 
     auto mesh =
-        std::make_shared<rxmesh::RXMeshStatic>(face_list,
+        make_mesh(face_list,
                                                patcher_file,
                                                patch_size,
                                                capacity_factor,
@@ -238,9 +254,88 @@ bool has_attribute(rxmesh::RXMeshStatic& mesh, const std::string& name)
     return mesh.does_attribute_exist(name);
 }
 
-void remove_attribute(rxmesh::RXMeshStatic& mesh, const std::string& name)
+void remove_attribute(const std::shared_ptr<rxmesh::RXMeshStatic>& mesh,
+                      const std::string& name)
 {
-    mesh.remove_attribute(name);
+    auto* storage = std::get_deleter<MeshDeleter>(mesh);
+    if (storage && storage->attribute_owners.count(name)) {
+        // An external buffer must not be returned to its allocator while a
+        // previously launched kernel can still use it.
+        using namespace rxmesh;
+        CUDA_ERROR(cudaDeviceSynchronize());
+        mesh->remove_attribute(name);
+        storage->attribute_owners.erase(name);
+    } else {
+        mesh->remove_attribute(name);
+    }
+}
+
+template <typename HandleT>
+py::object add_attribute_from_dlpack_view(
+    const std::shared_ptr<rxmesh::RXMeshStatic>& mesh,
+    const std::string& name, py::object source)
+{
+    auto* storage = std::get_deleter<MeshDeleter>(mesh);
+    if (!storage) {
+        throw std::invalid_argument("Tensor views require a mesh created by PyRXMesh.");
+    }
+    if (mesh->does_attribute_exist(name)) {
+        throw std::invalid_argument("An attribute with this name already exists.");
+    }
+    auto capsule = dlpack_util::acquire_capsule(
+        std::move(source), "add_attribute_from_dlpack_view()");
+    auto* managed = dlpack_util::extract_managed(capsule);
+    if (!managed) {
+        throw std::invalid_argument("Expected an unconsumed DLPack tensor.");
+    }
+    // Transfer capsule ownership to RAII immediately, including error paths.
+    if (PyCapsule_SetName(capsule.ptr(), "used_dltensor") != 0) {
+        throw py::error_already_set();
+    }
+    auto owner = std::shared_ptr<void>(managed, [](void* pointer) {
+        auto* tensor = static_cast<dlpack::DLManagedTensor*>(pointer);
+        if (tensor->deleter) {
+            tensor->deleter(tensor);
+        }
+    });
+    const auto& tensor = managed->dl_tensor;
+    int device = 0;
+    using namespace rxmesh;
+    CUDA_ERROR(cudaGetDevice(&device));
+    if (tensor.device.device_type != dlpack::kDLCUDA ||
+        tensor.device.device_id != device) {
+        throw std::invalid_argument("Expected a CUDA tensor on the current RXMesh device.");
+    }
+    if (tensor.ndim != 2 ||
+        tensor.shape[0] != mesh->get_num_elements<HandleT>() ||
+        tensor.shape[0] <= 0 || tensor.shape[1] <= 0 ||
+        tensor.shape[1] > std::numeric_limits<uint32_t>::max()) {
+        throw std::invalid_argument("Expected shape (mesh element count, channels).");
+    }
+    const int64_t rows = tensor.shape[0], cols = tensor.shape[1];
+    const int64_t stride0 = tensor.strides ? tensor.strides[0] : cols;
+    const int64_t stride1 = tensor.strides ? tensor.strides[1] : 1;
+    // Singleton dimensions do not constrain the corresponding stride. In
+    // particular, ordinary contiguous (N, 1) tensors already have SoA storage.
+    if ((rows > 1 && stride0 != 1) || (cols > 1 && stride1 != rows)) {
+        throw std::invalid_argument("Zero-copy attribute views require SoA strides (1, N); no copy is performed.");
+    }
+    return dispatch_dtype_str(dlpack_util::dtype_to_name(tensor.dtype), [&](auto tag) {
+        using T = typename decltype(tag)::type;
+        // Metadata only: no temporary attribute data allocation is needed.
+        auto attr = mesh->template add_attribute<T, HandleT>(
+            name, static_cast<uint32_t>(cols), LOCATION_NONE, SoA);
+        auto* pointer = reinterpret_cast<T*>(
+            static_cast<char*>(tensor.data) + tensor.byte_offset);
+        if (!attr->attach_device_buffer(pointer, size_t(rows) * size_t(cols) * sizeof(T))) {
+            mesh->remove_attribute(name);
+            throw std::invalid_argument("Unable to attach the tensor's CUDA buffer.");
+        }
+        auto out = std::make_shared<PyAttribute<T, HandleT>>(mesh, attr);
+        out->external_owner = owner;
+        storage->attribute_owners.emplace(name, std::move(owner));
+        return py::cast(out);
+    });
 }
 
 void export_obj(rxmesh::RXMeshStatic& mesh,
@@ -441,6 +536,18 @@ void register_mesh(py::module_& m)
              py::arg("location") = "all",
              py::arg("layout")   = "soa",
              "Add a typed face attribute.")
+        .def("add_vertex_attribute_from_dlpack_view",
+             &add_attribute_from_dlpack_view<VertexHandle>,
+             py::arg("name"), py::arg("source"),
+             "Share a CUDA SoA tensor in RXMesh linear vertex order without copying.")
+        .def("add_edge_attribute_from_dlpack_view",
+             &add_attribute_from_dlpack_view<EdgeHandle>,
+             py::arg("name"), py::arg("source"),
+             "Share a CUDA SoA tensor in RXMesh linear edge order without copying.")
+        .def("add_face_attribute_from_dlpack_view",
+             &add_attribute_from_dlpack_view<FaceHandle>,
+             py::arg("name"), py::arg("source"),
+             "Share a CUDA SoA tensor in RXMesh linear face order without copying.")
         .def("add_attribute_like",
              &add_attribute_like,
              py::arg("name"),

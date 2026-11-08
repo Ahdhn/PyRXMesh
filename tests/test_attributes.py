@@ -1,3 +1,5 @@
+import gc
+
 import numpy as np
 import pyrxmesh as rx
 import pytest
@@ -259,6 +261,62 @@ def test_attribute_from_torch_copy_cuda(mesh) -> None:
         attr.to_numpy_copy(source="host"),
         values.cpu().numpy(),
     )
+
+
+def test_attribute_from_torch_view_cuda(mesh) -> None:
+    for kind, count, dtype in (
+        ("vertex", mesh.num_vertices, torch.float32),
+        ("edge", mesh.num_edges, torch.int32),
+        ("face", mesh.num_faces, torch.int8),
+    ):
+        values = torch.empty_strided((count, 3), (1, count), device="cuda", dtype=dtype)
+        values.fill_(2)
+        name = f"torch_view_{kind}"
+        factory = getattr(mesh, f"add_{kind}_attribute_from_torch_view")
+        attr = factory(name, values)
+        exported = attr.to_torch("device")
+        assert exported.data_ptr() == values.data_ptr()
+        assert attr.layout == "soa" and attr.allocated == "device"
+        values.add_(3)
+        torch.testing.assert_close(exported, torch.full_like(values, 5))
+        attr.reset(7, location="device")
+        torch.testing.assert_close(values, torch.full_like(values, 7))
+
+        # Exports retain the borrowed buffer, even after the original Tensor,
+        # Python Attribute wrapper, and native mesh registration are removed.
+        del values, attr
+        gc.collect()
+        mesh.remove_attribute(name)
+        exported.add_(1)
+        torch.testing.assert_close(exported, torch.full_like(exported, 8))
+        del exported
+
+    # With NO Python wrapper/export left, the mesh registration alone must keep
+    # the Torch allocation alive. CUDA allocator accounting checks that lifetime
+    # without dereferencing a potentially freed pointer.
+    torch.cuda.synchronize()
+    gc.collect()
+    before = torch.cuda.memory_allocated()
+    values = torch.zeros(mesh.num_vertices, 1, device="cuda")
+    nbytes = values.numel() * values.element_size()
+    attr = mesh.add_vertex_attribute_from_torch_view("mesh_keeps_tensor", values)
+    del values, attr
+    gc.collect()
+    assert torch.cuda.memory_allocated() >= before + nbytes
+    mesh.remove_attribute("mesh_keeps_tensor")
+    gc.collect()
+    assert torch.cuda.memory_allocated() == before
+
+    with pytest.raises(ValueError, match="SoA"):
+        mesh.add_vertex_attribute_from_torch_view(
+            "invalid_strides", torch.zeros(mesh.num_vertices, 3, device="cuda")
+        )
+    with pytest.raises(ValueError, match="CUDA"):
+        mesh.add_vertex_attribute_from_torch_view(
+            "invalid_device", torch.zeros(mesh.num_vertices, 1)
+        )
+    assert not mesh.has_attribute("invalid_strides")
+    assert not mesh.has_attribute("invalid_device")
 
 
 def test_attribute_like_copy_and_remove(mesh) -> None:

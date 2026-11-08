@@ -286,6 +286,11 @@ class DType:
     Int8: typing.ClassVar[DType]
     __members__: typing.ClassVar[dict[str, DType]]
 
+    @typing.overload
+    def __eq__(self, other: DType) -> bool:
+        ...
+
+    @typing.overload
     def __eq__(self, other: typing.Any) -> bool:
         ...
 
@@ -304,6 +309,11 @@ class DType:
     def __int__(self) -> int:
         ...
 
+    @typing.overload
+    def __ne__(self, other: DType) -> bool:
+        ...
+
+    @typing.overload
     def __ne__(self, other: typing.Any) -> bool:
         ...
 
@@ -546,6 +556,11 @@ class ElementKind:
     Vertex: typing.ClassVar[ElementKind]
     __members__: typing.ClassVar[dict[str, ElementKind]]
 
+    @typing.overload
+    def __eq__(self, other: ElementKind) -> bool:
+        ...
+
+    @typing.overload
     def __eq__(self, other: typing.Any) -> bool:
         ...
 
@@ -564,6 +579,11 @@ class ElementKind:
     def __int__(self) -> int:
         ...
 
+    @typing.overload
+    def __ne__(self, other: ElementKind) -> bool:
+        ...
+
+    @typing.overload
     def __ne__(self, other: typing.Any) -> bool:
         ...
 
@@ -698,6 +718,15 @@ class LogLevel:
     WARN: typing.ClassVar[LogLevel]
     __members__: typing.ClassVar[dict[str, LogLevel]]
 
+    @typing.overload
+    def __eq__(self, other: LogLevel) -> bool:
+        ...
+
+    @typing.overload
+    def __eq__(self, other: typing.SupportsInt | typing.SupportsIndex) -> bool:
+        ...
+
+    @typing.overload
     def __eq__(self, other: typing.Any) -> bool:
         ...
 
@@ -716,6 +745,15 @@ class LogLevel:
     def __int__(self) -> int:
         ...
 
+    @typing.overload
+    def __ne__(self, other: LogLevel) -> bool:
+        ...
+
+    @typing.overload
+    def __ne__(self, other: typing.SupportsInt | typing.SupportsIndex) -> bool:
+        ...
+
+    @typing.overload
     def __ne__(self, other: typing.Any) -> bool:
         ...
 
@@ -784,6 +822,11 @@ class Op:
     VV: typing.ClassVar[Op]
     __members__: typing.ClassVar[dict[str, Op]]
 
+    @typing.overload
+    def __eq__(self, other: Op) -> bool:
+        ...
+
+    @typing.overload
     def __eq__(self, other: typing.Any) -> bool:
         ...
 
@@ -802,6 +845,11 @@ class Op:
     def __int__(self) -> int:
         ...
 
+    @typing.overload
+    def __ne__(self, other: Op) -> bool:
+        ...
+
+    @typing.overload
     def __ne__(self, other: typing.Any) -> bool:
         ...
 
@@ -932,6 +980,12 @@ class RXMeshStatic:
     def add_edge_attribute(self, name: str, dtype: _DTypeName, dim: _IntLike=1, location: _LocationArg='all', layout: _LayoutArg='soa') -> Attribute:
         ...
 
+    def add_edge_attribute_from_dlpack_view(self, name: str, source: object) -> Attribute:
+        ...
+
+    def add_edge_attribute_from_torch_view(self, name: str, values: torch.Tensor) -> Attribute:
+        ...
+
     @overload
     def add_face_attribute(self, name: str, dtype: Literal['float32', 'float']='float32', dim: _IntLike=1, location: _LocationArg='all', layout: _LayoutArg='soa') -> FaceAttributeFloat32:
         ...
@@ -952,6 +1006,12 @@ class RXMeshStatic:
     def add_face_attribute(self, name: str, dtype: _DTypeName, dim: _IntLike=1, location: _LocationArg='all', layout: _LayoutArg='soa') -> Attribute:
         ...
 
+    def add_face_attribute_from_dlpack_view(self, name: str, source: object) -> Attribute:
+        ...
+
+    def add_face_attribute_from_torch_view(self, name: str, values: torch.Tensor) -> Attribute:
+        ...
+
     @overload
     def add_vertex_attribute(self, name: str, dtype: Literal['float32', 'float']='float32', dim: _IntLike=1, location: _LocationArg='all', layout: _LayoutArg='soa') -> VertexAttributeFloat32:
         ...
@@ -970,6 +1030,12 @@ class RXMeshStatic:
 
     @overload
     def add_vertex_attribute(self, name: str, dtype: _DTypeName, dim: _IntLike=1, location: _LocationArg='all', layout: _LayoutArg='soa') -> Attribute:
+        ...
+
+    def add_vertex_attribute_from_dlpack_view(self, name: str, source: object) -> Attribute:
+        ...
+
+    def add_vertex_attribute_from_torch_view(self, name: str, values: torch.Tensor) -> Attribute:
         ...
 
     def attribute_names(self) -> list[str]:

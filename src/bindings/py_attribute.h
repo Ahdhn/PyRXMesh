@@ -128,6 +128,9 @@ struct PyAttributeBase
     virtual ~PyAttributeBase() = default;
 
     std::shared_ptr<rxmesh::RXMeshStatic> mesh_owner;
+    // Also retain borrowed storage if the mesh registration is removed while
+    // this wrapper (or an exported tensor holding it) remains alive.
+    std::shared_ptr<void> external_owner;
 
     virtual const char* name() const                               = 0;
     virtual DType       dtype() const                              = 0;
