@@ -1,0 +1,19 @@
+[build-system]
+requires = ["scikit-build-core>=0.12", "pybind11>=2.13"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "rxmesh-tensor-attribute"
+version = "0.1.0"
+description = "PyTorch tensor and RXMesh attribute interop example"
+requires-python = ">=3.10"
+dependencies = ["PyRXMesh", "torch"]
+
+[tool.scikit-build]
+minimum-version = "0.12"
+cmake.version = ">=3.25,<4"
+cmake.build-type = "Release"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["src/rxmesh_tensor_attribute"]
+build.targets = ["_rxmesh_tensor_attribute"]
+install.components = ["python"]
