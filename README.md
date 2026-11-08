@@ -25,6 +25,14 @@ Visualization is optional and it depends on [Polyscope](https://polyscope.run/py
 python -m pip install "PyRXMesh[viz]"
 ```
 
+Python cuDSS solvers can be installed as an optional CUDA 12 dependency:
+
+```bash
+python -m pip install "PyRXMesh[cudss]"
+```
+
+This installs NVIDIA's `nvmath-python[cu12]` bundle. Its sparse direct solver accepts the Torch CSR tensor exported by `energy.hessian_view.to_torch("device")`.
+
 For a source build, see [docs/DEVELOPING.md](docs/DEVELOPING.md).
 
 ## Create a mesh

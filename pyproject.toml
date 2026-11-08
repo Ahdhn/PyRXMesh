@@ -29,6 +29,9 @@ classifiers = [
 viz = [
     "polyscope",
 ]
+cudss = [
+    "nvmath-python[cu12]>=1.0,<1.1",
+]
 
 [project.urls]
 RXMesh = "https://github.com/owensgroup/RXMesh"
@@ -47,6 +50,7 @@ build.targets = ["_rxmesh"]
 install.components = ["python"]
 
 sdist.include = [
+    "examples/tensor_attribute_plugin/**",
     "examples/custom_kernel_plugin/CMakeLists.txt",
     "examples/custom_kernel_plugin/README.md",
     "examples/custom_kernel_plugin/pyproject.toml",
